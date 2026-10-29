@@ -16,7 +16,8 @@ type TextField =
   | "devcontainerPath"
   | "dotfilesRepository"
   | "dotfilesTargetPath"
-  | "dotfilesInstallCommand";
+  | "dotfilesInstallCommand"
+  | "sshAgentSocket";
 
 function splitPaths(text: string): string[] {
   return text
@@ -137,6 +138,19 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
           {input("dotfilesRepository", "Repository", "Cloned into new containers, like VS Code's dotfiles setting.", "owner/repo")}
           {input("dotfilesTargetPath", "Target path", undefined, "~/dotfiles")}
           {input("dotfilesInstallCommand", "Install command", undefined, "Detected")}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="SSH agent">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Forward SSH agent"
+            hint="Keys loaded in this machine's agent work in new containers without a passphrase. Rebuild existing ones."
+            value={current.forwardSshAgent}
+            disabled={settings.saving}
+            onValueChange={(forwardSshAgent) => void save({ forwardSshAgent })}
+          />
+          {input("sshAgentSocket", "Agent socket", "Path in Docker's VM on macOS, such as Colima's.", "Detected")}
         </SettingsCard>
       </SettingsSection>
 
