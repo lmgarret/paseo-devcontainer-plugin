@@ -105,7 +105,7 @@ export function describe(container: Container, hosts: readonly PluginHostSummary
 
   if (container.job?.state === "running") return view("busy", container.job.phase, []);
   if (container.docker === "missing") return view("stopped", "Never started", ["start"]);
-  if (container.docker === "stopped") return view("stopped", "Stopped", ["start"]);
+  if (container.docker === "stopped") return view("stopped", "Stopped", ["start", "rebuild"]);
   if (container.paseoInstalled === false) {
     return view("warning", "No Paseo", ["install-paseo", ...RUNNING_ACTIONS]);
   }
@@ -229,7 +229,8 @@ export function kindColor(kind: ViewKind, theme: PluginTheme): string {
 // Actions that do not depend on the app's host connection, for Command Center items.
 export function commandActions(container: Container): Action[] {
   if (container.job?.state === "running") return [];
-  if (container.docker !== "running") return ["start"];
+  if (container.docker === "missing") return ["start"];
+  if (container.docker === "stopped") return ["start", "rebuild"];
   const actions: Action[] = ["stop", "rebuild"];
   if (container.paseoInstalled === false) actions.unshift("install-paseo");
   else if (container.daemonRunning !== true) actions.unshift("start-daemon");
