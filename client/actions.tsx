@@ -22,7 +22,7 @@ import {
 export const ACTION_META: Record<UiAction, { icon: string; label: string }> = {
   start: { icon: "Play", label: ACTION_LABELS.start },
   stop: { icon: "Square", label: ACTION_LABELS.stop },
-  rebuild: { icon: "RotateCw", label: ACTION_LABELS.rebuild },
+  rebuild: { icon: "Hammer", label: ACTION_LABELS.rebuild },
   "rebuild-no-cache": { icon: "Eraser", label: ACTION_LABELS["rebuild-no-cache"] },
   "start-daemon": { icon: "Zap", label: ACTION_LABELS["start-daemon"] },
   "install-paseo": { icon: "Download", label: ACTION_LABELS["install-paseo"] },
