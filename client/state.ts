@@ -4,8 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   type Action,
+  ACTION_LABELS,
   type Container,
+  dismissJobRpc,
   type Forward,
+  openLogsRpc,
   openShellRpc,
   runActionRpc,
   settingsDefinition,
@@ -13,8 +16,8 @@ import {
   statusRpc,
 } from "../shared/contract";
 
-// Shell is client-driven: it opens a Paseo terminal rather than running a daemon job.
-export type UiAction = Action | "shell";
+// Client-driven: shell and logs open a Paseo terminal, dismiss forgets a finished job.
+export type UiAction = Action | "shell" | "logs" | "dismiss";
 
 export type ViewKind = "busy" | "online" | "warning" | "stopped";
 
@@ -33,7 +36,8 @@ export interface DevcontainersState {
   status: Status | undefined;
   error: string | null;
   views: ContainerView[];
-  run(repoPath: string, action: Action): Promise<void>;
+  // Resolves to the workspace holding the build log when it was opened.
+  run(repoPath: string, action: Action): Promise<string | null>;
   // Re-reads status now, e.g. after a settings change that affects the list.
   refresh(): Promise<void>;
   pending: boolean;
@@ -74,7 +78,7 @@ export function useDevcontainers(): DevcontainersState {
     views,
     pending: mutation.isPending,
     async run(repoPath, action) {
-      await mutation.mutateAsync({ repoPath, action });
+      return (await mutation.mutateAsync({ repoPath, action })).logWorkspaceId;
     },
     async refresh() {
       await queryClient.invalidateQueries({ queryKey: STATUS_KEY });
@@ -83,9 +87,18 @@ export function useDevcontainers(): DevcontainersState {
 }
 
 const RUNNING_ACTIONS: UiAction[] = ["shell", "rebuild", "stop"];
+// A failure keeps its log button this long; a failure that left no running container stays until
+// dismissed.
+export const FAILURE_VISIBLE_MS = 10 * 60_000;
+const BUILD_ACTIONS: ReadonlySet<Action> = new Set(["start", "rebuild", "rebuild-no-cache"]);
 
 export function describe(container: Container, hosts: readonly PluginHostSummary[]): ContainerView {
   const host = container.serverId ? (hosts.find((entry) => entry.serverId === container.serverId) ?? null) : null;
+  const job = container.job;
+  const recentFailure =
+    job?.state === "failed" && job.endedAt !== null && Date.now() - job.endedAt < FAILURE_VISIBLE_MS;
+  // A failed rebuild removes the container first, so nothing is left running.
+  const stranded = job?.state === "failed" && container.docker !== "running";
   const view = (kind: ViewKind, label: string, actions: UiAction[], detail: string | null = null): ContainerView => {
     const notes = [detail];
     if (container.paseoHomePersistent === false && container.paseoInstalled === true) {
@@ -95,16 +108,23 @@ export function describe(container: Container, hosts: readonly PluginHostSummary
       container,
       kind,
       label,
-      actions,
+      actions: recentFailure && !actions.includes("logs") ? [...actions, "logs"] : actions,
       host,
       detail: notes.filter(Boolean).join(" ") || null,
       active:
-        !container.hidden && (host !== null || container.docker === "running" || container.job?.state === "running"),
+        !container.hidden && (host !== null || container.docker === "running" || job?.state === "running" || stranded),
     };
   };
 
-  if (container.job?.state === "running") return view("busy", container.job.phase, []);
-  if (container.docker === "missing") return view("stopped", "Never started", ["start"]);
+  if (job?.state === "running") return view("busy", job.phase, ["logs"]);
+  if (stranded) {
+    const retry: Action = BUILD_ACTIONS.has(job.action) ? job.action : "start";
+    // Rebuild's confirmation offers the no-cache variant.
+    const actions: UiAction[] = retry === "rebuild" ? [retry] : [retry, "rebuild"];
+    return view("warning", `${ACTION_LABELS[job.action]} failed`, [...actions, "logs", "dismiss"]);
+  }
+  // Rebuild is offered in every state but busy, so it is always in the same place.
+  if (container.docker === "missing") return view("stopped", "Never started", ["start", "rebuild"]);
   if (container.docker === "stopped") return view("stopped", "Stopped", ["start", "rebuild"]);
   if (container.paseoInstalled === false) {
     return view("warning", "No Paseo", ["install-paseo", ...RUNNING_ACTIONS]);
@@ -213,6 +233,14 @@ export function useOpenShell() {
   return useRpc(openShellRpc);
 }
 
+export function useOpenLogs() {
+  return useRpc(openLogsRpc);
+}
+
+export function useDismissJob() {
+  return useRpc(dismissJobRpc);
+}
+
 export function kindColor(kind: ViewKind, theme: PluginTheme): string {
   switch (kind) {
     case "online":
@@ -229,9 +257,8 @@ export function kindColor(kind: ViewKind, theme: PluginTheme): string {
 // Actions that do not depend on the app's host connection, for Command Center items.
 export function commandActions(container: Container): Action[] {
   if (container.job?.state === "running") return [];
-  if (container.docker === "missing") return ["start"];
-  if (container.docker === "stopped") return ["start", "rebuild"];
-  const actions: Action[] = ["stop", "rebuild"];
+  if (container.docker !== "running") return ["start", "rebuild", "rebuild-no-cache"];
+  const actions: Action[] = ["stop", "rebuild", "rebuild-no-cache"];
   if (container.paseoInstalled === false) actions.unshift("install-paseo");
   else if (container.daemonRunning !== true) actions.unshift("start-daemon");
   return actions;

@@ -5,7 +5,7 @@ import { DevcontainerSidebarItem, SCREEN_ID, setSettingsOpener } from "./client/
 import { ACTION_META } from "./client/actions";
 import { DEVCONTAINERS_ICON } from "./client/devcontainers-icon";
 import { commandActions, type UiAction } from "./client/state";
-import { type Container, openShellRpc, runActionRpc, statusRpc } from "./shared/contract";
+import { type Container, openLogsRpc, openShellRpc, runActionRpc, statusRpc } from "./shared/contract";
 
 const SETTINGS_ID = "settings";
 const COMMAND_REFRESH_MS = 15_000;
@@ -53,6 +53,7 @@ export default function contribute(client: PluginClientContext) {
     for (const container of containers) {
       const actions: UiAction[] = commandActions(container);
       if (container.docker === "running") actions.push("shell");
+      if (container.job) actions.push("logs");
       for (const action of actions) {
         wanted.set(`dc-${action}-${commandKey(container.repoPath)}`, { container, action });
       }
@@ -74,13 +75,14 @@ export default function contribute(client: PluginClientContext) {
           keywords: [...KEYWORDS, container.repoPath],
           context: "global",
           async onSelect({ rpc, openScreen }) {
-            if (action !== "shell") {
-              await rpc(runActionRpc, { repoPath: container.repoPath, action });
-              return;
-            }
+            const { repoPath } = container;
+            let workspaceId: string | null;
+            if (action === "shell") workspaceId = (await rpc(openShellRpc, { repoPath })).workspaceId;
+            else if (action === "logs") workspaceId = (await rpc(openLogsRpc, { repoPath })).workspaceId;
+            else if (action === "dismiss") return;
+            else workspaceId = (await rpc(runActionRpc, { repoPath, action })).logWorkspaceId;
             // Command callbacks cannot navigate to a workspace; the screen does it from its params.
-            const { workspaceId } = await rpc(openShellRpc, { repoPath: container.repoPath });
-            openScreen({ screenId: SCREEN_ID, params: workspaceParams({ workspaceId }) });
+            if (workspaceId) openScreen({ screenId: SCREEN_ID, params: workspaceParams({ workspaceId }) });
           },
         }),
       );

@@ -12,9 +12,12 @@ Each container is linked to its Paseo project and workspace on this host, and sh
 
 ## What you get
 
-A "Dev containers" row in the sidebar footer shows how many containers run. Its popover lists up to five active containers, those running, busy, or paired with the app, with a status dot and icon actions:
+A "Dev containers" row in the sidebar footer shows how many containers run. Its popover lists up to five active containers, those running, busy, paired with the app, or left without a container by a failed build, with a status dot and icon actions:
 
-- start, stop, and rebuild, with stop and rebuild asking for confirmation because agents in the container stop with it;
+- start, stop, and rebuild, with stop and rebuild asking for confirmation because agents in the container stop with it. The rebuild confirmation also offers a rebuild without the image cache;
+- logs: a Paseo terminal in the project's workspace following the latest job's full log. Rebuilds, and starts that create a container, open it on their own;
+- rebuild in every state but while a job runs, including containers built by VS Code or the `devcontainer` CLI;
+- after a failed build that removed the container, retry, rebuild, the log, and dismiss;
 - start the Paseo daemon when it is down, or install Paseo when it is missing;
 - open a shell: a Paseo terminal in the project's workspace running `docker exec` into the container.
 
@@ -41,6 +44,7 @@ Settings:
 
 - Discovery: scan Paseo projects for dev container configs, and add other repositories.
 - Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is off by default, so nothing is installed until you press Install Paseo or turn it on.
+- Builds: whether rebuilds open their log in a terminal. On by default.
 - Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
 - Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.
 - SSH agent: mount this machine's SSH agent into created containers, so keys with a passphrase work without typing it, like VS Code's agent forwarding. On macOS the plugin uses the socket that Docker Desktop and OrbStack provide. With another runtime such as Colima, set the agent socket's path in its VM. On Linux it uses `$SSH_AUTH_SOCK`. On by default. Existing containers need a rebuild.

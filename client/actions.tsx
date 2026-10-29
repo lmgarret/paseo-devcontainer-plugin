@@ -1,5 +1,6 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
@@ -8,8 +9,12 @@ import { FolderIcon, ProjectIcon } from "./project-icon";
 import {
   type ContainerView,
   type DevcontainersState,
+  FAILURE_VISIBLE_MS,
   kindColor,
+  STATUS_KEY,
   type UiAction,
+  useDismissJob,
+  useOpenLogs,
   useOpenShell,
   workspaceLabel,
 } from "./state";
@@ -17,10 +22,13 @@ import {
 export const ACTION_META: Record<UiAction, { icon: string; label: string }> = {
   start: { icon: "Play", label: ACTION_LABELS.start },
   stop: { icon: "Square", label: ACTION_LABELS.stop },
-  rebuild: { icon: "RotateCw", label: ACTION_LABELS.rebuild },
+  rebuild: { icon: "Hammer", label: ACTION_LABELS.rebuild },
+  "rebuild-no-cache": { icon: "Eraser", label: ACTION_LABELS["rebuild-no-cache"] },
   "start-daemon": { icon: "Zap", label: ACTION_LABELS["start-daemon"] },
   "install-paseo": { icon: "Download", label: ACTION_LABELS["install-paseo"] },
   shell: { icon: "SquareTerminal", label: "Shell" },
+  logs: { icon: "ScrollText", label: "Logs" },
+  dismiss: { icon: "X", label: "Dismiss" },
 };
 
 // Tooltip text: what the button does, not just its name.
@@ -28,9 +36,12 @@ const ACTION_TOOLTIPS: Record<UiAction, string> = {
   start: "Start container",
   stop: "Stop container",
   rebuild: "Rebuild container",
+  "rebuild-no-cache": "Rebuild container without the image cache",
   "start-daemon": "Start the Paseo daemon",
   "install-paseo": "Install Paseo in the container",
   shell: "Open a shell in the container",
+  logs: "Open the log in a terminal",
+  dismiss: "Dismiss the failure",
 };
 const TOOLTIP_DELAY_MS = 350;
 // Rows wait longer so passing over them on the way to an icon shows nothing.
@@ -44,9 +55,7 @@ let activeTooltip: { current: () => void } | null = null;
 const LEAD = 26;
 export const CARD_INDENT = 3 * LEAD;
 
-const NEEDS_CONFIRM: ReadonlySet<UiAction> = new Set(["stop", "rebuild"]);
-// A failure stays in the row this long, then the row shows the plain state again.
-const FAILURE_VISIBLE_MS = 10 * 60_000;
+const NEEDS_CONFIRM: ReadonlySet<UiAction> = new Set(["stop", "rebuild", "rebuild-no-cache"]);
 
 interface ContainerRowProps extends Pick<PluginHostProps, "theme" | "layout"> {
   // This plugin's host, for project icon colours.
@@ -56,8 +65,8 @@ interface ContainerRowProps extends Pick<PluginHostProps, "theme" | "layout"> {
   // Popover rows and page cards name the project; page rows sit under a project header and name
   // the workspace.
   variant: "popover" | "page" | "card";
-  // Receives the workspace holding the new shell terminal.
-  onShell(workspaceId: string): void;
+  // Receives the workspace holding a new shell or log terminal.
+  onOpenWorkspace(workspaceId: string): void;
   // Pressing the row: the page expands it, the popover shows it on the page. A container hosts
   // many workspaces, so the row never guesses one to open.
   onPress?: () => void;
@@ -77,7 +86,7 @@ export function ContainerRow({
   view,
   state,
   variant,
-  onShell,
+  onOpenWorkspace,
   onPress,
   pressLabel,
   onToggleHidden,
@@ -86,6 +95,9 @@ export function ContainerRow({
 }: ContainerRowProps) {
   const toast = useToast();
   const openShell = useOpenShell();
+  const openLogs = useOpenLogs();
+  const dismissJob = useDismissJob();
+  const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState<UiAction | null>(null);
   const [opening, setOpening] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -124,12 +136,17 @@ export function ContainerRow({
   async function run(action: UiAction) {
     setConfirming(null);
     try {
-      if (action === "shell") {
+      if (action === "shell" || action === "logs") {
         setOpening(true);
-        const { workspaceId } = await openShell({ repoPath: container.repoPath });
-        onShell(workspaceId);
+        const open = action === "shell" ? openShell : openLogs;
+        const { workspaceId } = await open({ repoPath: container.repoPath });
+        onOpenWorkspace(workspaceId);
+      } else if (action === "dismiss") {
+        await dismissJob({ repoPath: container.repoPath });
+        await queryClient.invalidateQueries({ queryKey: STATUS_KEY });
       } else {
-        await state.run(container.repoPath, action);
+        const logWorkspaceId = await state.run(container.repoPath, action);
+        if (logWorkspaceId) onOpenWorkspace(logWorkspaceId);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : String(error));
@@ -156,8 +173,12 @@ export function ContainerRow({
   );
 
   const job = container.job;
+  // A failure that left no running container stays until dismissed.
   const failed =
-    job?.state === "failed" && job.endedAt !== null && Date.now() - job.endedAt < FAILURE_VISIBLE_MS ? job : null;
+    job?.state === "failed" &&
+    (container.docker !== "running" || (job.endedAt !== null && Date.now() - job.endedAt < FAILURE_VISIBLE_MS))
+      ? job
+      : null;
   const color = kindColor(view.kind, theme);
   const where = workspaceLabel(container);
   // A project's main checkout is the default; only worktrees need their workspace named in the popover.
@@ -259,6 +280,16 @@ export function ContainerRow({
             {iconButton("Check", `Confirm ${ACTION_META[confirming].label.toLowerCase()}`, theme.colors.statusDanger, () =>
               void run(confirming),
             )}
+            {/* A stale image layer is a common cause of a broken build; offer the clean variant here. */}
+            {confirming === "rebuild"
+              ? iconButton(
+                  ACTION_META["rebuild-no-cache"].icon,
+                  ACTION_META["rebuild-no-cache"].label,
+                  theme.colors.statusDanger,
+                  () => void run("rebuild-no-cache"),
+                  ACTION_TOOLTIPS["rebuild-no-cache"],
+                )
+              : null}
             {iconButton("X", "Cancel", theme.colors.foregroundMuted, () => setConfirming(null), "Cancel")}
           </View>
         ) : (
@@ -267,8 +298,8 @@ export function ContainerRow({
               iconButton(
                 ACTION_META[action].icon,
                 ACTION_META[action].label,
-                // The leading recovery action (start, start daemon, install) stands out.
-                index === 0 && action !== "shell" ? theme.colors.accent : theme.colors.foregroundMuted,
+                // The leading recovery action (start, retry, start daemon, install) stands out.
+                index === 0 && action !== "shell" && action !== "logs" ? theme.colors.accent : theme.colors.foregroundMuted,
                 () => (NEEDS_CONFIRM.has(action) ? setConfirming(action) : void run(action)),
                 ACTION_TOOLTIPS[action],
               ),

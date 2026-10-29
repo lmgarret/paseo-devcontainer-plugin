@@ -18,6 +18,8 @@ const generalShape = {
   forwardSshAgent: z.boolean().default(true),
   // Empty: Docker Desktop's and OrbStack's agent socket on macOS, $SSH_AUTH_SOCK on Linux.
   sshAgentSocket: z.string().default(""),
+  // Builds open their log in a terminal of the folder's workspace.
+  openBuildLogs: z.boolean().default(true),
   // Each container's daemon gets a stable local port, saved per repository, from this one up.
   forwardDaemon: z.boolean().default(true),
   daemonPortStart: z.number().int().min(1024).max(65535).default(6768),
@@ -64,12 +66,13 @@ export const settingsDefinition = defineSettings({
 
 export type DevcontainerSettings = z.output<typeof settingsDefinition.schema>;
 
-export const actionSchema = z.enum(["start", "rebuild", "stop", "start-daemon", "install-paseo"]);
+export const actionSchema = z.enum(["start", "rebuild", "rebuild-no-cache", "stop", "start-daemon", "install-paseo"]);
 export type Action = z.infer<typeof actionSchema>;
 
 export const ACTION_LABELS: Record<Action, string> = {
   start: "Start",
   rebuild: "Rebuild",
+  "rebuild-no-cache": "Rebuild without cache",
   stop: "Stop",
   "start-daemon": "Start Paseo daemon",
   "install-paseo": "Install Paseo",
@@ -159,7 +162,21 @@ export const statusRpc = defineRpc({
 export const runActionRpc = defineRpc({
   name: "action.run",
   input: z.object({ repoPath: z.string(), action: actionSchema }),
-  output: z.object({ job: jobSchema }),
+  // The workspace holding the build log terminal, when it was opened.
+  output: z.object({ job: jobSchema, logWorkspaceId: z.string().nullable() }),
+});
+
+export const openLogsRpc = defineRpc({
+  name: "logs.open",
+  input: z.object({ repoPath: z.string() }),
+  output: z.object({ workspaceId: z.string(), terminalId: z.string() }),
+});
+
+// Forgets a finished job, so a failed build stops asking for attention.
+export const dismissJobRpc = defineRpc({
+  name: "job.dismiss",
+  input: z.object({ repoPath: z.string() }),
+  output: z.object({}),
 });
 
 export const openShellRpc = defineRpc({

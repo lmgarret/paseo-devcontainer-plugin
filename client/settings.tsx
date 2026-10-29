@@ -95,6 +95,18 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
         </SettingsCard>
       </SettingsSection>
 
+      <SettingsSection title="Builds">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Open the build log"
+            hint="Rebuilds, and starts that create a container, open their log in a terminal of the workspace."
+            value={current.openBuildLogs}
+            disabled={settings.saving}
+            onValueChange={(openBuildLogs) => void save({ openBuildLogs })}
+          />
+        </SettingsCard>
+      </SettingsSection>
+
       <SettingsSection title="Port forwarding">
         <SettingsCard>
           <SettingsSwitch
