@@ -14,6 +14,10 @@ const generalShape = {
   dotfilesRepository: z.string().default(""),
   dotfilesTargetPath: z.string().default(""),
   dotfilesInstallCommand: z.string().default(""),
+  // Mounts the host's SSH agent into created containers, like VS Code's agent forwarding.
+  forwardSshAgent: z.boolean().default(true),
+  // Empty: Docker Desktop's and OrbStack's agent socket on macOS, $SSH_AUTH_SOCK on Linux.
+  sshAgentSocket: z.string().default(""),
   // Each container's daemon gets a stable local port, saved per repository, from this one up.
   forwardDaemon: z.boolean().default(true),
   daemonPortStart: z.number().int().min(1024).max(65535).default(6768),

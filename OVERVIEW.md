@@ -43,8 +43,9 @@ Settings:
 - Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is off by default, so nothing is installed until you press Install Paseo or turn it on.
 - Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
 - Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.
+- SSH agent: mount this machine's SSH agent into created containers, so keys with a passphrase work without typing it, like VS Code's agent forwarding. On macOS the plugin uses the socket that Docker Desktop and OrbStack provide. With another runtime such as Colima, set the agent socket's path in its VM. On Linux it uses `$SSH_AUTH_SOCK`. On by default. Existing containers need a rebuild.
 - Advanced: paths to `docker` and `devcontainer` when they are not on the daemon's PATH, in Homebrew, Docker Desktop, or nvm.
 
 ## Limits
 
-A daemon keeps its server ID across rebuilds only if its Paseo home is on a mount; the page warns when it is not. Containers created by the plugin do not get VS Code's SSH agent forwarding. The plugin cannot pair hosts or change Paseo's built-in "host unreachable" screen. Forwarded ports exist only while this machine's Paseo daemon runs, and each new connection starts a `docker exec`, adding a little latency.
+A daemon keeps its server ID across rebuilds only if its Paseo home is on a mount; the page warns when it is not. The plugin cannot pair hosts or change Paseo's built-in "host unreachable" screen. Forwarded ports exist only while this machine's Paseo daemon runs, and each new connection starts a `docker exec`, adding a little latency.

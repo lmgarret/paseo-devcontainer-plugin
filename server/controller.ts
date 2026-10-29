@@ -1,3 +1,5 @@
+/// <reference types="node" />
+import { existsSync } from "node:fs";
 import type { Action, Container, DevcontainerSettings, Job, Status } from "../shared/contract";
 import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
 import { PortForwarder } from "./forwarder";
@@ -10,6 +12,11 @@ const DAEMON_START_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
 // First builds pull images and run features; keep a generous ceiling so a hung build still ends.
 const UP_TIMEOUT_MS = 45 * 60_000;
+// Docker Desktop and OrbStack relay the macOS agent to this path in their VM.
+const DOCKER_VM_AGENT_SOCKET = "/run/host-services/ssh-auth.sock";
+const SSH_AGENT_TARGET = "/tmp/paseo-ssh-agent.sock";
+// Prepended to exec'd scripts so shells and the daemon's agents use the forwarded agent.
+const USE_SSH_AGENT = `if [ -S ${SSH_AGENT_TARGET} ]; then export SSH_AUTH_SOCK=${SSH_AGENT_TARGET}; fi; `;
 
 interface Tools {
   docker: string | null;
@@ -138,7 +145,12 @@ export class DevcontainerController {
     const args = ["exec", "-it", "-u", container.remoteUser];
     if (container.workspaceFolder) args.push("-w", container.workspaceFolder);
     // Prefer a login bash like VS Code's terminal; fall back to sh in minimal images.
-    args.push(container.id, "sh", "-c", 'if command -v bash >/dev/null; then exec bash -l; else exec sh -l; fi');
+    args.push(
+      container.id,
+      "sh",
+      "-c",
+      `${USE_SSH_AGENT}if command -v bash >/dev/null; then exec bash -l; else exec sh -l; fi`,
+    );
     return { name: `${candidate.name} (container)`, command: tools.docker, args };
   }
 
@@ -226,7 +238,7 @@ export class DevcontainerController {
   }
 
   private exec(docker: string, target: Target, script: string, options: { timeoutMs: number; onLine?: Log }) {
-    return run(docker, ["exec", "-u", target.remoteUser, target.containerId, "bash", "-lc", script], {
+    return run(docker, ["exec", "-u", target.remoteUser, target.containerId, "bash", "-lc", USE_SSH_AGENT + script], {
       env: toolEnv([docker]),
       ...options,
     });
@@ -332,6 +344,11 @@ export class DevcontainerController {
       if (settings.dotfilesTargetPath) args.push("--dotfiles-target-path", settings.dotfilesTargetPath);
       if (settings.dotfilesInstallCommand) args.push("--dotfiles-install-command", settings.dotfilesInstallCommand);
     }
+    const agentSocket = sshAgentSource(settings, log);
+    if (agentSocket) {
+      args.push("--mount", `type=bind,source=${agentSocket},target=${SSH_AGENT_TARGET}`);
+      args.push("--remote-env", `SSH_AUTH_SOCK=${SSH_AGENT_TARGET}`);
+    }
     const result = await run(tools.devcontainer, args, {
       env: toolEnv([tools.devcontainer, docker]),
       timeoutMs: UP_TIMEOUT_MS,
@@ -343,10 +360,25 @@ export class DevcontainerController {
     if (result.code !== 0 || outcome?.outcome !== "success" || !outcome.containerId) {
       throw new Error(outcome?.message ?? (lastLine(result.stderr) || "devcontainer up failed"));
     }
-    return {
+    const target = {
       containerId: outcome.containerId.slice(0, 12),
       remoteUser: outcome.remoteUser ?? candidate.container?.remoteUser ?? "root",
     };
+    if (agentSocket) await this.openSshAgent(docker, target, log);
+    return target;
+  }
+
+  // The socket in Docker's VM is root-only; containers usually run as another user.
+  private async openSshAgent(docker: string, target: Target, log: Log): Promise<void> {
+    const script =
+      `[ -S ${SSH_AGENT_TARGET} ] || exit 42; ` +
+      (process.platform === "darwin" ? `chmod 666 ${SSH_AGENT_TARGET}` : "true");
+    const result = await run(docker, ["exec", "-u", "root", target.containerId, "sh", "-c", script], {
+      env: toolEnv([docker]),
+      timeoutMs: 20_000,
+    });
+    if (result.code === 42) log("SSH agent not mounted in this container; rebuild it to forward the agent.");
+    else if (result.code !== 0) log(`Could not open the SSH agent socket: ${lastLine(result.stderr)}`);
   }
 
   private async ensureDaemon(
@@ -447,6 +479,16 @@ function parseOutcome(stdout: string): UpOutcome | null {
 function listenPortOf(listen: string | undefined): number | null {
   const match = /:(\d+)$/.exec(listen ?? "");
   return match?.[1] ? Number(match[1]) : null;
+}
+
+function sshAgentSource(settings: DevcontainerSettings, log: Log): string | null {
+  if (!settings.forwardSshAgent) return null;
+  if (settings.sshAgentSocket) return settings.sshAgentSocket;
+  if (process.platform === "darwin") return DOCKER_VM_AGENT_SOCKET;
+  const socket = process.env.SSH_AUTH_SOCK;
+  if (socket && existsSync(socket)) return socket;
+  log("No SSH agent found ($SSH_AUTH_SOCK); the container will not get one.");
+  return null;
 }
 
 function lastLine(text: string): string {
