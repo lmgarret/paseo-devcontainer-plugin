@@ -40,6 +40,7 @@ export interface DockerContainer {
   // Where the repository is mounted inside the container.
   workspaceFolder: string | null;
   paseoHome: { persistent: boolean; serverId: string | null };
+  hostNetwork: boolean;
 }
 
 export interface Candidate {
@@ -65,6 +66,7 @@ interface InspectResult {
   Created: string;
   State: { Status: string; StartedAt?: string };
   Config: { User?: string; Env?: string[] | null; Labels?: Record<string, string> | null };
+  HostConfig?: { NetworkMode?: string };
   Mounts?: InspectMount[];
 }
 
@@ -108,6 +110,7 @@ function toDockerContainer(raw: InspectResult): DockerContainer {
     remoteUser,
     workspaceFolder: workspaceFolderOf(raw, labels["devcontainer.local_folder"]),
     paseoHome: paseoHomeOf(raw, remoteUser),
+    hostNetwork: raw.HostConfig?.NetworkMode === "host",
   };
 }
 

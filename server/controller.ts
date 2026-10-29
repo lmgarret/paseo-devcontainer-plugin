@@ -1,5 +1,6 @@
 import type { Action, Container, DevcontainerSettings, Job, Status } from "../shared/contract";
 import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
+import { PortForwarder } from "./forwarder";
 import { type ProjectIcon, readProjectIcon } from "./icons";
 import { resolveTool, run, toolEnv } from "./process";
 
@@ -24,6 +25,8 @@ interface DaemonInfo {
   installed: boolean;
   running: boolean;
   serverId: string | null;
+  // The daemon's port inside the container; null for a socket or an unknown address.
+  listenPort: number | null;
 }
 
 interface Discovery {
@@ -39,6 +42,7 @@ export class DevcontainerController {
   private readonly jobs = new Map<string, Job>();
   // Last server ID a daemon reported per repository, for when the container is stopped.
   private readonly knownServerIds = new Map<string, string>();
+  private readonly forwarder = new PortForwarder();
   private nextJobId = 1;
   private catalog: PaseoCatalog = { projects: [], workspaces: [] };
   private cached: { at: number; status: Promise<Status> } | null = null;
@@ -59,11 +63,28 @@ export class DevcontainerController {
       });
     }
     const status = await this.cached.status;
-    // Jobs change faster than the cache; always return the live ones.
+    // Jobs and forwards change faster than the cache; always return the live ones.
     return {
       ...status,
-      containers: status.containers.map((container) => ({ ...container, job: this.jobSnapshot(container.repoPath) })),
+      containers: status.containers.map((container) => ({
+        ...container,
+        forwards: this.forwarder.forwards(container.repoPath),
+        job: this.jobSnapshot(container.repoPath),
+      })),
     };
+  }
+
+  // Opens and closes local ports for what listens in running containers; called on an interval.
+  async syncForwards(): Promise<void> {
+    const settings = await this.readSettings();
+    const docker = resolveTool("docker", settings.dockerPath);
+    if (!docker) return;
+    const containers = await listDockerContainers(docker);
+    await this.forwarder.sync(settings, docker, containers);
+  }
+
+  close(): void {
+    this.forwarder.close();
   }
 
   // Settings changes (hidden containers, discovery) must show on the next status read.
@@ -166,6 +187,7 @@ export class DevcontainerController {
           container?.running && tools.docker
             ? await this.daemonInfo(tools.docker, { containerId: container.id, remoteUser: container.remoteUser })
             : null;
+        if (daemon?.listenPort) this.forwarder.setDaemonPort(candidate.repoPath, daemon.listenPort);
         const detected = daemon?.serverId ?? container?.paseoHome.serverId ?? null;
         if (detected) this.knownServerIds.set(candidate.repoPath, detected);
         return {
@@ -189,11 +211,13 @@ export class DevcontainerController {
           containerId: container?.id ?? null,
           containerName: container?.name ?? null,
           startedAt: container?.running ? container.startedAt : null,
+          hostNetwork: container?.hostNetwork ?? false,
           serverId:
             detected || this.knownServerIds.get(candidate.repoPath) || null,
           paseoHomePersistent: container ? container.paseoHome.persistent : null,
           paseoInstalled: daemon ? daemon.installed : null,
           daemonRunning: daemon?.installed ? daemon.running : null,
+          forwards: [],
           job: null,
         };
       }),
@@ -216,12 +240,17 @@ export class DevcontainerController {
         "command -v paseo >/dev/null 2>&1 || exit 42; paseo daemon status --json",
         { timeoutMs: 20_000 },
       );
-      if (result.code === 42) return { installed: false, running: false, serverId: null };
+      if (result.code === 42) return { installed: false, running: false, serverId: null, listenPort: null };
       try {
-        const parsed = JSON.parse(result.stdout) as { localDaemon?: string; serverId?: string };
-        return { installed: true, running: parsed.localDaemon === "running", serverId: parsed.serverId ?? null };
+        const parsed = JSON.parse(result.stdout) as { localDaemon?: string; serverId?: string; listen?: string };
+        return {
+          installed: true,
+          running: parsed.localDaemon === "running",
+          serverId: parsed.serverId ?? null,
+          listenPort: listenPortOf(parsed.listen),
+        };
       } catch {
-        return { installed: true, running: false, serverId: null };
+        return { installed: true, running: false, serverId: null, listenPort: null };
       }
     } catch (error) {
       console.error("[devcontainer-host] daemon status failed:", error);
@@ -338,6 +367,7 @@ export class DevcontainerController {
       await this.installPaseo(settings, docker, target, phase, log);
       info = await this.daemonInfo(docker, target);
     }
+    if (info?.listenPort) this.forwarder.setDaemonPort(repoPath, info.listenPort);
     if (info?.running) {
       log(`Daemon already running (${info.serverId ?? "unknown server"})`);
       this.checkServerId(repoPath, info, log);
@@ -357,6 +387,7 @@ export class DevcontainerController {
     while (Date.now() < deadline) {
       info = await this.daemonInfo(docker, target);
       if (info?.running) {
+        if (info.listenPort) this.forwarder.setDaemonPort(repoPath, info.listenPort);
         log(`Daemon running (${info.serverId ?? "unknown server"})`);
         this.checkServerId(repoPath, info, log);
         return;
@@ -410,6 +441,12 @@ function parseOutcome(stdout: string): UpOutcome | null {
   } catch {
     return null;
   }
+}
+
+// "127.0.0.1:6767" or "[::1]:6767"; a socket path has no port.
+function listenPortOf(listen: string | undefined): number | null {
+  const match = /:(\d+)$/.exec(listen ?? "");
+  return match?.[1] ? Number(match[1]) : null;
 }
 
 function lastLine(text: string): string {

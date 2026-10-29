@@ -18,12 +18,17 @@ type TextField =
   | "dotfilesTargetPath"
   | "dotfilesInstallCommand";
 
-
 function splitPaths(text: string): string[] {
   return text
     .split(/[\n,]/)
     .map((path) => path.trim())
     .filter(Boolean);
+}
+
+function parsePorts(text: string): number[] {
+  return splitPaths(text)
+    .map(Number)
+    .filter((port) => Number.isInteger(port) && port > 0 && port <= 65535);
 }
 
 export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
@@ -86,6 +91,44 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(autoInstallPaseo) => void save({ autoInstallPaseo })}
           />
           {input("installCommand", "Install command")}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Port forwarding">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Forward Paseo daemons"
+            hint="Each container's daemon gets its own local port, kept across restarts. Pair it in Paseo at that address."
+            value={current.forwardDaemon}
+            disabled={settings.saving}
+            onValueChange={(forwardDaemon) => void save({ forwardDaemon })}
+          />
+          <SettingsInput
+            key={`daemonPortStart-${revision}`}
+            label="First daemon port"
+            hint="New containers take the next free port from here. Existing ones keep theirs."
+            initialValue={String(values.daemonPortStart)}
+            onChangeText={(text) => {
+              const port = Number(text.trim());
+              if (Number.isInteger(port) && port >= 1024 && port <= 65535) {
+                setDraft((previous) => ({ ...previous, daemonPortStart: port }));
+              }
+            }}
+          />
+          <SettingsSwitch
+            label="Forward detected ports"
+            hint="Ports opened in a container, such as a dev server, on the same local port when free."
+            value={current.forwardPorts}
+            disabled={settings.saving}
+            onValueChange={(forwardPorts) => void save({ forwardPorts })}
+          />
+          <SettingsInput
+            key={`ignoredPorts-${revision}`}
+            label="Ignored ports"
+            placeholder="5432, 6379"
+            initialValue={values.ignoredPorts.join(", ")}
+            onChangeText={(text) => setDraft((previous) => ({ ...previous, ignoredPorts: parsePorts(text) }))}
+          />
         </SettingsCard>
       </SettingsSection>
 

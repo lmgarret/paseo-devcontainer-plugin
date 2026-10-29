@@ -6,6 +6,7 @@ import { ContainerRow } from "./actions";
 import { FolderIcon, ProjectIcon } from "./project-icon";
 import { settingsDefinition } from "../shared/contract";
 import { HoverPressable } from "./hover";
+import { PortsPanel } from "./ports";
 import { groupByProject, kindColor, useDevcontainers, type WorkspaceTarget } from "./state";
 
 // Popovers and commands cannot navigate; they open this screen with the target in its params.
@@ -17,6 +18,11 @@ export function workspaceParams(target: WorkspaceTarget): PluginScreenParams {
   };
 }
 
+// The popover opens a container on this page, expanded.
+export function containerParams(repoPath: string): PluginScreenParams {
+  return { container: repoPath, at: String(Date.now()) };
+}
+
 const handledRequests = new Set<string>();
 
 export function ContainersScreen(props: PluginScreenProps & { openSettings(): void }) {
@@ -24,11 +30,20 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
   const state = useDevcontainers();
   const settings = useSettings(settingsDefinition);
   const [collapsedOverride, setCollapsedOverride] = useState<string[] | null>(null);
+  // Containers showing their daemon and ports panel.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const toast = useToast();
   const styles = useMemo(
     () => ({
       root: { flex: 1, backgroundColor: theme.colors.surface0 },
-      content: { padding: layout.compact ? 8 : 16, gap: 14, maxWidth: 720, width: "100%" as const },
+      // A centred column, like Paseo's settings pages.
+      content: {
+        padding: layout.compact ? 8 : 16,
+        gap: 14,
+        maxWidth: 760,
+        width: "100%" as const,
+        alignSelf: "center" as const,
+      },
       group: { gap: 2 },
       header: {
         flexDirection: "row" as const,
@@ -39,6 +54,7 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
         borderRadius: 6,
       },
       hovered: { backgroundColor: theme.colors.surface2 },
+      open: { backgroundColor: theme.colors.surface1, borderRadius: 8 },
       dots: { flexDirection: "row" as const, gap: 4, marginLeft: "auto" as const, paddingRight: 4 },
       dot: { width: 6, height: 6, borderRadius: 3 },
       project: { color: theme.colors.foregroundMuted, fontSize: 13, fontWeight: "500" as const, flexShrink: 1 },
@@ -64,6 +80,14 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
     openWorkspace({ workspaceId: params.workspace, ...(params.server ? { serverId: params.server } : {}) });
   }, [request]);
 
+  const focus = params.container ? `${params.container}:${params.at ?? ""}` : null;
+  useEffect(() => {
+    if (!focus || handledRequests.has(focus) || !params.container) return;
+    handledRequests.add(focus);
+    const repoPath = params.container;
+    setExpanded((current) => new Set(current).add(repoPath));
+  }, [focus]);
+
   if (!state.status && !state.error) return <Loading />;
   const tools = state.status?.tools;
 
@@ -79,6 +103,13 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
       return undefined;
     });
   };
+
+  const toggleExpanded = (repoPath: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (!next.delete(repoPath)) next.add(repoPath);
+      return next;
+    });
 
   const toggleHidden = (repoPath: string) => {
     if (settings.status !== "ready") return;
@@ -139,21 +170,32 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
               </View>
             ) : null}
           </HoverPressable>
-          {(collapsed.has(group.key) ? [] : group.views).map((view) => (
-            <View key={view.container.repoPath} style={view.container.hidden ? { opacity: 0.55 } : undefined}>
-              <ContainerRow
-                theme={theme}
-                layout={layout}
-                hostId={host.id}
-                view={view}
-                state={state}
-                variant="page"
-                onShell={(workspaceId) => openWorkspace({ workspaceId })}
-                onOpenWorkspace={openWorkspace}
-                onToggleHidden={() => toggleHidden(view.container.repoPath)}
-              />
-            </View>
-          ))}
+          {(collapsed.has(group.key) ? [] : group.views).map((view) => {
+            const running = view.container.docker === "running";
+            const open = running && expanded.has(view.container.repoPath);
+            return (
+              <View
+                key={view.container.repoPath}
+                style={[open && styles.open, view.container.hidden && { opacity: 0.55 }]}
+              >
+                <ContainerRow
+                  theme={theme}
+                  layout={layout}
+                  hostId={host.id}
+                  view={view}
+                  state={state}
+                  variant="page"
+                  onShell={(workspaceId) => openWorkspace({ workspaceId })}
+                  onPress={running ? () => toggleExpanded(view.container.repoPath) : undefined}
+                  pressLabel={`${open ? "Collapse" : "Expand"} ${view.container.name}`}
+                  onToggleHidden={() => toggleHidden(view.container.repoPath)}
+                  expanded={open}
+                  onToggleExpanded={running ? () => toggleExpanded(view.container.repoPath) : undefined}
+                />
+                {open ? <PortsPanel theme={theme} layout={layout} view={view} /> : null}
+              </View>
+            );
+          })}
         </View>
       ))}
       <View style={styles.footer}>

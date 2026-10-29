@@ -4,6 +4,8 @@ import type { PaseoCatalog, WorkspaceRef } from "./server/discovery";
 import { DevcontainerController } from "./server/controller";
 import { resolveTool } from "./server/process";
 
+const FORWARD_INTERVAL_MS = 3_000;
+
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(settingsDefinition);
   // The SDK connection only reaches us through handler contexts; keep the latest for discovery.
@@ -50,7 +52,24 @@ export default function contribute(server: PluginServerContext) {
     },
   );
 
-  const unsubscribe = settings.subscribe(() => controller.invalidate());
+  // Forwarding runs whether or not a client is open: the app needs the daemon ports to connect.
+  let syncing = false;
+  const syncForwards = () => {
+    if (syncing) return;
+    syncing = true;
+    controller
+      .syncForwards()
+      .catch((error: unknown) => console.error("[devcontainer-host] port forwarding failed:", error))
+      .finally(() => {
+        syncing = false;
+      });
+  };
+  const forwardTimer = setInterval(syncForwards, FORWARD_INTERVAL_MS);
+  // Forwarding a port by hand or stopping one answers right away rather than on the next tick.
+  const unsubscribe = settings.subscribe(() => {
+    controller.invalidate();
+    syncForwards();
+  });
 
   console.log(
     `[devcontainer-host] docker=${resolveTool("docker", "") ?? "missing"} devcontainer=${resolveTool("devcontainer", "") ?? "missing"}`,
@@ -76,5 +95,9 @@ export default function contribute(server: PluginServerContext) {
     });
     return { workspaceId: workspace.id, terminalId: terminal.id };
   });
-  return () => unsubscribe();
+  return () => {
+    clearInterval(forwardTimer);
+    controller.close();
+    unsubscribe();
+  };
 }

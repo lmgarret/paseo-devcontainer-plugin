@@ -5,14 +5,14 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
 import { ContainerRow } from "./actions";
 import { HoverPressable } from "./hover";
-import { workspaceParams } from "./screen";
+import { containerParams, workspaceParams } from "./screen";
 import {
+  appForwards,
   type ContainerView,
   type DevcontainersState,
   kindColor,
   sortActive,
   useDevcontainers,
-  type WorkspaceTarget,
 } from "./state";
 
 export const SCREEN_ID = "containers";
@@ -29,11 +29,17 @@ const POPOVER_LIMIT = 5;
 const lastKinds = new Map<string, ContainerView["kind"]>();
 const notifiedJobs = new Set<string>();
 const loadedAt = Date.now();
+// Detected forwards already seen; ports open when the app loads are not announced.
+const knownForwards = new Set<string>();
+let forwardsSeeded = false;
 
 function useToasts(state: DevcontainersState) {
   const toast = useToast();
   const signature = state.views
-    .map((view) => `${view.container.repoPath}:${view.kind}:${view.host?.status}:${view.container.job?.state}`)
+    .map((view) => {
+      const ports = appForwards(view.container).map((forward) => `${forward.containerPort}>${forward.hostPort}`);
+      return `${view.container.repoPath}:${view.kind}:${view.host?.status}:${view.container.job?.state}:${ports.join(",")}`;
+    })
     .join("|");
 
   useEffect(() => {
@@ -57,7 +63,10 @@ function useToasts(state: DevcontainersState) {
       return [{ name: view.container.name, job }];
     });
 
+    const forwarded = state.status ? newForwards(state.views) : [];
+
     // A newer toast replaces the visible one, so show the most important message last.
+    for (const message of forwarded) toast.show(message, { variant: "info", durationMs: 6_000 });
     if (unreachable.length > 0) {
       toast.show(`${unreachable.join(", ")}: container host unreachable. Start devcontainer?`, {
         variant: "warning",
@@ -72,6 +81,36 @@ function useToasts(state: DevcontainersState) {
       }
     }
   }, [signature, toast]);
+}
+
+// One message per container whose detected ports appeared since the last status, like VS Code's
+// "Your application running on port 5173 is available" notification.
+function newForwards(views: ContainerView[]): string[] {
+  const current = new Set<string>();
+  const messages: string[] = [];
+  for (const view of views) {
+    const fresh: string[] = [];
+    for (const forward of appForwards(view.container)) {
+      if (forward.hostPort === null || forward.manual) continue;
+      const key = `${view.container.repoPath}:${forward.containerPort}`;
+      current.add(key);
+      if (knownForwards.has(key)) continue;
+      knownForwards.add(key);
+      fresh.push(
+        forward.hostPort === forward.containerPort
+          ? `${forward.containerPort}`
+          : `${forward.containerPort} (as ${forward.hostPort})`,
+      );
+    }
+    if (forwardsSeeded && fresh.length > 0 && !view.container.hidden) {
+      const ports = `${fresh.length > 1 ? "ports" : "port"} ${fresh.join(", ")}`;
+      messages.push(`${view.container.name}: ${ports} forwarded to localhost`);
+    }
+  }
+  // Forget closed ports so a server that comes back is announced again.
+  for (const key of knownForwards) if (!current.has(key)) knownForwards.delete(key);
+  forwardsSeeded = true;
+  return messages;
 }
 
 function ContainersPopover({ theme, layout, host, close, openScreen }: PluginPopoverProps) {
@@ -109,9 +148,14 @@ function ContainersPopover({ theme, layout, host, close, openScreen }: PluginPop
   );
 
   // Popovers cannot navigate to a workspace; the screen does it from its params.
-  const showWorkspace = (target: WorkspaceTarget) => {
+  const showWorkspace = (workspaceId: string) => {
     close();
-    openScreen({ screenId: SCREEN_ID, params: workspaceParams(target) });
+    openScreen({ screenId: SCREEN_ID, params: workspaceParams({ workspaceId }) });
+  };
+  // A row opens the page with its container expanded, where its workspaces and ports are.
+  const showContainer = (repoPath: string) => {
+    close();
+    openScreen({ screenId: SCREEN_ID, params: containerParams(repoPath) });
   };
 
   return (
@@ -130,8 +174,9 @@ function ContainersPopover({ theme, layout, host, close, openScreen }: PluginPop
           state={state}
           hostId={host.id}
           variant="popover"
-          onShell={(workspaceId) => showWorkspace({ workspaceId })}
-          onOpenWorkspace={showWorkspace}
+          onShell={showWorkspace}
+          onPress={() => showContainer(view.container.repoPath)}
+          pressLabel={`Show ${view.container.name}`}
         />
       ))}
       <View style={styles.footer}>

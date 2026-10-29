@@ -1,8 +1,17 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { getPaseoClient, type PluginHostSummary, useHosts, useRpc } from "@getpaseo/plugin/client";
+import { getPaseoClient, type PluginHostSummary, useHosts, useRpc, useSettings } from "@getpaseo/plugin/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { type Action, type Container, openShellRpc, runActionRpc, type Status, statusRpc } from "../shared/contract";
+import {
+  type Action,
+  type Container,
+  type Forward,
+  openShellRpc,
+  runActionRpc,
+  settingsDefinition,
+  type Status,
+  statusRpc,
+} from "../shared/contract";
 
 // Shell is client-driven: it opens a Paseo terminal rather than running a daemon job.
 export type UiAction = Action | "shell";
@@ -106,18 +115,75 @@ export function describe(container: Container, hosts: readonly PluginHostSummary
     return view("busy", "Reconnecting…", RUNNING_ACTIONS, "The container just started; Paseo reconnects on its own.");
   }
   if (container.daemonRunning === true) {
+    const forward = daemonForward(container);
     if (!host) {
       const id = container.serverId ? ` (${container.serverId})` : "";
-      return view("online", "Running · not paired", RUNNING_ACTIONS, `Pair its daemon${id} in Paseo to use it here.`);
+      const address = forward?.hostPort ? ` at localhost:${forward.hostPort}` : "";
+      return view("online", "Running · not paired", RUNNING_ACTIONS, `Pair its daemon${id}${address} in Paseo to use it here.`);
     }
     return view(
       "warning",
       host.status === "connecting" ? "Connecting" : "Host unreachable",
       RUNNING_ACTIONS,
-      "The daemon runs but the app cannot reach it.",
+      forward?.error
+        ? `The daemon runs but its port is not forwarded: ${forward.error}.`
+        : "The daemon runs but the app cannot reach it.",
     );
   }
   return view("warning", "Paseo stopped", ["start-daemon", ...RUNNING_ACTIONS]);
+}
+
+export function daemonForward(container: Container): Forward | null {
+  return container.forwards.find((forward) => forward.kind === "daemon") ?? null;
+}
+
+export function appForwards(container: Container): Forward[] {
+  return container.forwards.filter((forward) => forward.kind === "app");
+}
+
+export interface PortActions {
+  ready: boolean;
+  // Detected ports this repository stopped forwarding.
+  ignored(repoPath: string): number[];
+  forward(repoPath: string, port: number): Promise<void>;
+  // A manual forward is dropped; a detected one is ignored for this repository.
+  stop(repoPath: string, forward: Forward): Promise<void>;
+  restore(repoPath: string, port: number): Promise<void>;
+}
+
+// Per-repository port choices live in settings, which only clients can write.
+export function usePortActions(): PortActions {
+  const settings = useSettings(settingsDefinition);
+  const queryClient = useQueryClient();
+  type RepoPorts = { forwarded: number[]; ignored: number[] };
+  const update = async (repoPath: string, change: (ports: RepoPorts) => RepoPorts) => {
+    if (settings.status !== "ready") throw new Error("Settings are not loaded yet");
+    const next = change(settings.values.repoPorts[repoPath] ?? { forwarded: [], ignored: [] });
+    const repoPorts = { ...settings.values.repoPorts, [repoPath]: next };
+    if (next.forwarded.length === 0 && next.ignored.length === 0) delete repoPorts[repoPath];
+    if (!(await settings.save({ ...settings.values, repoPorts }, settings.revision))) {
+      throw new Error(settings.saveError ?? "Could not save");
+    }
+    // The daemon re-syncs forwards on save; pick up the result shortly after.
+    setTimeout(() => void queryClient.invalidateQueries({ queryKey: STATUS_KEY }), 1_000);
+  };
+  const without = (ports: number[], port: number) => ports.filter((entry) => entry !== port);
+  return {
+    ready: settings.status === "ready",
+    ignored: (repoPath) => (settings.status === "ready" ? (settings.values.repoPorts[repoPath]?.ignored ?? []) : []),
+    forward: (repoPath, port) =>
+      update(repoPath, (ports) => ({
+        forwarded: [...without(ports.forwarded, port), port],
+        ignored: without(ports.ignored, port),
+      })),
+    stop: (repoPath, forward) =>
+      update(repoPath, (ports) =>
+        forward.manual
+          ? { ...ports, forwarded: without(ports.forwarded, forward.containerPort) }
+          : { ...ports, ignored: [...without(ports.ignored, forward.containerPort), forward.containerPort] },
+      ),
+    restore: (repoPath, port) => update(repoPath, (ports) => ({ ...ports, ignored: without(ports.ignored, port) })),
+  };
 }
 
 const RECONNECT_GRACE_MS = 90_000;
@@ -181,25 +247,6 @@ export interface WorkspaceTarget {
   workspaceId: string;
   // Absent for this plugin's own host.
   serverId?: string;
-}
-
-// Prefer the workspace on the container's own Paseo host, where its agents live; fall back to
-// this host's workspace for the folder.
-export async function resolveWorkspace(view: ContainerView): Promise<WorkspaceTarget | null> {
-  const { container, host } = view;
-  if (host?.status === "online" && container.workspaceFolder) {
-    try {
-      const workspace = await getPaseoClient(host.serverId).workspaces.open({ cwd: container.workspaceFolder });
-      return { workspaceId: workspace.id, serverId: host.serverId };
-    } catch {
-      // Fall through to this host's workspace.
-    }
-  }
-  return container.workspace ? { workspaceId: container.workspace.id } : null;
-}
-
-export function canOpenWorkspace(view: ContainerView): boolean {
-  return Boolean(view.container.workspace || (view.host?.status === "online" && view.container.workspaceFolder));
 }
 
 export interface ProjectGroup {

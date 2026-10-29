@@ -14,6 +14,22 @@ const generalShape = {
   dotfilesRepository: z.string().default(""),
   dotfilesTargetPath: z.string().default(""),
   dotfilesInstallCommand: z.string().default(""),
+  // Each container's daemon gets a stable local port, saved per repository, from this one up.
+  forwardDaemon: z.boolean().default(true),
+  daemonPortStart: z.number().int().min(1024).max(65535).default(6768),
+  // Other ports listening in a container, opened on the same local port when free.
+  forwardPorts: z.boolean().default(true),
+  ignoredPorts: z.array(z.number().int()).default([]),
+  // Per repository: ports forwarded by hand, and detected ports to stop forwarding.
+  repoPorts: z
+    .record(
+      z.string(),
+      z.object({
+        forwarded: z.array(z.number().int()).default([]),
+        ignored: z.array(z.number().int()).default([]),
+      }),
+    )
+    .default({}),
 };
 
 export const settingsDefinition = defineSettings({
@@ -67,6 +83,21 @@ const jobSchema = z.object({
 });
 export type Job = z.infer<typeof jobSchema>;
 
+const forwardSchema = z.object({
+  kind: z.enum(["daemon", "app"]),
+  containerPort: z.number(),
+  // Local port on this machine; null while it cannot be bound.
+  hostPort: z.number().nullable(),
+  error: z.string().nullable(),
+  // Command line of the listening process in the container, when known.
+  process: z.string().nullable(),
+  // Forwarded by hand rather than detected.
+  manual: z.boolean(),
+  // Something listens on the port in the container; a port forwarded by hand may not yet.
+  listening: z.boolean(),
+});
+export type Forward = z.infer<typeof forwardSchema>;
+
 const containerSchema = z.object({
   // Identity: the repository folder, as in the `devcontainer.local_folder` label.
   repoPath: z.string(),
@@ -94,6 +125,8 @@ const containerSchema = z.object({
   containerName: z.string().nullable(),
   // When the container last started, in ms since the epoch.
   startedAt: z.number().nullable(),
+  // Shares this machine's network through Docker, so only its daemon is forwarded.
+  hostNetwork: z.boolean(),
   // Paired Paseo host: daemon report, or the server-id file in a mounted Paseo home.
   serverId: z.string().nullable(),
   // False when the Paseo home is inside the container and a rebuild resets its identity.
@@ -101,6 +134,7 @@ const containerSchema = z.object({
   // Null when the container is not running or the check failed.
   paseoInstalled: z.boolean().nullable(),
   daemonRunning: z.boolean().nullable(),
+  forwards: z.array(forwardSchema),
   job: jobSchema.nullable(),
 });
 export type Container = z.infer<typeof containerSchema>;

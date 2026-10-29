@@ -20,17 +20,29 @@ A "Dev containers" row in the sidebar footer shows how many containers run. Its 
 
 Pressing a row opens its workspace, on the container's own Paseo host when it is online. When a paired container stops, a toast suggests starting it. The "All dev containers" page groups every container by project, shows its branch or workspace, container, and paired host, and lets you hide a container from the sidebar. The Command Center lists the actions valid for each container.
 
+## Port forwarding
+
+Like VS Code, the plugin forwards ports from running containers to this machine through `docker exec`, so devcontainer.json needs no `appPort` and nothing has to listen outside the container's loopback:
+
+- each container's Paseo daemon gets its own local port, from 6768 up, saved per repository so it stays the same across restarts and rebuilds;
+- other ports opened in a container, such as a dev server, are detected within a few seconds and forwarded on the same local port, or the next free one. A toast announces them, and they show as pills on the container's row: press one to open it in the browser.
+
+On the "All dev containers" page, a running container's chevron expands its details, like VS Code's Ports view. You see the daemon's address and whether it is paired, then each forwarded port with its local address and the listening process. Pressing a port opens it; hovering shows copy and stop. Stopping a detected port ignores it for that repository, with an undo, and a collapsed "ignored ports" list brings it back. "Forward a port" adds one by hand, even before anything listens on it.
+
+Ports below 1024, Linux's ephemeral range (32768–60999), and ignored ports in settings are not detected, but can be forwarded by hand. Containers on the host network already share their ports with this machine through Docker, so only their daemon is forwarded, to a port that does not clash with this machine's own daemon. Containers need Node.js on their login PATH, which Paseo already requires.
+
 ## Setup
 
-Install the plugin on the daemon of the machine that runs Docker, not on a daemon inside a container. That machine needs Docker and the `devcontainer` CLI (`@devcontainers/cli`). Pair each container's Paseo daemon with the app once.
+Install the plugin on the daemon of the machine that runs Docker, not on a daemon inside a container. That machine needs Docker and the `devcontainer` CLI (`@devcontainers/cli`). Pair each container's Paseo daemon with the app once, at the `localhost` address shown on its row.
 
 Settings:
 
 - Discovery: scan Paseo projects for dev container configs, and add other repositories.
 - Paseo in containers: the install command, run as the container's remote user, defaulting to `npm install -g @getpaseo/cli`, and whether Start and Rebuild run it when Paseo is missing.
+- Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
 - Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.
 - Advanced: paths to `docker` and `devcontainer` when they are not on the daemon's PATH, in Homebrew, Docker Desktop, or nvm.
 
 ## Limits
 
-A daemon keeps its server ID across rebuilds only if its Paseo home is on a mount; the page warns when it is not. Containers created by the plugin do not get VS Code's SSH agent forwarding. The plugin cannot pair hosts or change Paseo's built-in "host unreachable" screen.
+A daemon keeps its server ID across rebuilds only if its Paseo home is on a mount; the page warns when it is not. Containers created by the plugin do not get VS Code's SSH agent forwarding. The plugin cannot pair hosts or change Paseo's built-in "host unreachable" screen. Forwarded ports exist only while this machine's Paseo daemon runs, and each new connection starts a `docker exec`, adding a little latency.

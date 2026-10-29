@@ -3,16 +3,14 @@ import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
+import { PortPills } from "./ports";
 import { FolderIcon, ProjectIcon } from "./project-icon";
 import {
   type ContainerView,
-  canOpenWorkspace,
   type DevcontainersState,
   kindColor,
-  resolveWorkspace,
   type UiAction,
   useOpenShell,
-  type WorkspaceTarget,
   workspaceLabel,
 } from "./state";
 
@@ -54,9 +52,15 @@ interface ContainerRowProps extends Pick<PluginHostProps, "theme" | "layout"> {
   variant: "popover" | "page";
   // Receives the workspace holding the new shell terminal.
   onShell(workspaceId: string): void;
-  onOpenWorkspace(target: WorkspaceTarget): void;
+  // Pressing the row: the page expands it, the popover shows it on the page. A container hosts
+  // many workspaces, so the row never guesses one to open.
+  onPress?: () => void;
+  pressLabel?: string;
   // Page rows: hide from the sidebar popover, or bring back.
   onToggleHidden?: () => void;
+  // Page rows of running containers: show or hide the daemon and ports panel below.
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
 }
 
 // One line like Paseo's host list: status dot, name, muted context, and ghost icon actions.
@@ -68,8 +72,11 @@ export function ContainerRow({
   state,
   variant,
   onShell,
-  onOpenWorkspace,
+  onPress,
+  pressLabel,
   onToggleHidden,
+  expanded = false,
+  onToggleExpanded,
 }: ContainerRowProps) {
   const toast = useToast();
   const openShell = useOpenShell();
@@ -97,8 +104,9 @@ export function ContainerRow({
       danger: { color: theme.colors.statusDanger, fontSize: 12, flexShrink: 1 },
       icons: { flexDirection: "row" as const, alignItems: "center" as const },
       confirm: { color: theme.colors.foreground, fontSize: 12, marginRight: 2 },
-      sub: { color: theme.colors.foregroundMuted, fontSize: 11, paddingLeft: 24 },
-      log: { color: theme.colors.foregroundMuted, fontSize: 11, fontFamily: "monospace", paddingLeft: 24 },
+      // Under the name: page rows lead with a chevron and a dot, popover rows with a dot and an icon.
+      sub: { color: theme.colors.foregroundMuted, fontSize: 11, paddingLeft: page ? 52 : 24 },
+      log: { color: theme.colors.foregroundMuted, fontSize: 11, fontFamily: "monospace", paddingLeft: page ? 52 : 24 },
     }),
     [theme, page, hit, layout.compact],
   );
@@ -118,11 +126,6 @@ export function ContainerRow({
     } finally {
       setOpening(false);
     }
-  }
-
-  async function open() {
-    const target = await resolveWorkspace(view);
-    if (target) onOpenWorkspace(target);
   }
 
   const disabled = state.pending || opening;
@@ -153,23 +156,26 @@ export function ContainerRow({
   // Online and stopped are carried by the dot; other states are worth words.
   const quiet = view.kind === "online" || (view.kind === "stopped" && container.docker === "stopped");
   const title = page ? where : container.name;
-  const context = page
-    ? quiet
-      ? null
-      : view.label
-    : [popoverWhere, quiet ? null : view.label].filter(Boolean).join(" · ") || null;
-  const fullText = [title, page ? null : where, view.label, view.detail].filter(Boolean).join(" · ");
+  // An online host is carried by the dot, so only its name is worth words.
   const host = view.host
-    ? `${view.host.label} ${view.host.status}`
-    : container.serverId
-      ? `${container.serverId} not paired`
-      : null;
-  const subline = [
-    page && container.workspace && container.branch ? container.branch : null,
-    container.containerName ?? "not created",
-    host,
-    container.hidden ? "hidden from sidebar" : null,
-  ]
+    ? view.host.status === "online"
+      ? view.host.label
+      : `${view.host.label} ${view.host.status}`
+    : null;
+  // Page rows fit on one line: the state when worth words, the paired host, the branch when the
+  // workspace is named otherwise, and whether the sidebar hides it.
+  const context = page
+    ? [
+        quiet ? null : view.label,
+        host,
+        container.workspace && container.branch ? container.branch : null,
+        container.hidden ? "hidden" : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || null
+    : [popoverWhere, quiet ? null : view.label].filter(Boolean).join(" · ") || null;
+  // The Docker container's name is rarely needed; hovering the row shows it.
+  const fullText = [title, page ? null : where, view.label, host, container.containerName, view.detail]
     .filter(Boolean)
     .join(" · ");
 
@@ -180,13 +186,12 @@ export function ContainerRow({
       <View accessibilityLabel={view.label} style={[styles.dot, { backgroundColor: color }]} />
     );
 
-  const openable = canOpenWorkspace(view);
   return (
-    // The whole row opens the workspace, like a host row selects its host; icons press on their own.
+    // The whole row responds to a press; icons press on their own.
     <Pressable
-      accessibilityRole={openable ? "link" : undefined}
-      accessibilityLabel={openable ? `Open ${title}` : undefined}
-      onPress={openable ? () => void open() : undefined}
+      accessibilityRole={onPress ? "button" : undefined}
+      accessibilityLabel={onPress ? (pressLabel ?? title) : undefined}
+      onPress={onPress}
       onHoverIn={() => {
         setHovered(true);
         rowTooltip.showLater();
@@ -199,6 +204,26 @@ export function ContainerRow({
     >
       {rowTooltip.shown ? <TooltipBubble theme={theme} text={fullText} top={layout.compact ? 40 : 30} align="left" /> : null}
       <View style={styles.line}>
+        {page ? (
+          // Page rows keep a chevron's width so names line up whether or not they expand.
+          <View style={styles.lead}>
+            {onToggleExpanded ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ expanded }}
+                accessibilityLabel={`${expanded ? "Hide" : "Show"} ports of ${title}`}
+                hitSlop={6}
+                onPress={onToggleExpanded}
+              >
+                <Icon
+                  name={expanded ? "ChevronDown" : "ChevronRight"}
+                  size={13}
+                  color={expanded ? theme.colors.foreground : theme.colors.foregroundMuted}
+                />
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         <View style={styles.lead}>{status}</View>
         {page ? null : container.project ? (
           <ProjectIcon project={container.project} hostId={hostId} />
@@ -219,6 +244,7 @@ export function ContainerRow({
             </Text>
           ) : null}
         </View>
+        {confirming ? null : <PortPills theme={theme} container={container} max={page ? 3 : 2} />}
         {confirming ? (
           <View style={styles.icons}>
             <Text style={styles.confirm}>{ACTION_META[confirming].label}?</Text>
@@ -255,11 +281,9 @@ export function ContainerRow({
           {failed.error}
         </Text>
       ) : null}
+      {/* A second line only for what needs attention: warnings and running jobs. */}
       {page ? (
         <>
-          <Text style={styles.sub} numberOfLines={1} selectable>
-            {subline}
-          </Text>
           {view.detail ? <Text style={styles.sub}>{view.detail}</Text> : null}
           {job?.state === "running"
             ? job.log.slice(-3).map((line, index) => (
@@ -351,7 +375,7 @@ function TooltipBubble({ theme, text, top, align }: { theme: PluginHostProps["th
   );
 }
 
-function IconButton({
+export function IconButton({
   theme,
   icon,
   color,
