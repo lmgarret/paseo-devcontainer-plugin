@@ -4,6 +4,7 @@ import { useEffect, useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
 import { ContainerRow } from "./actions";
+import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
 import { HoverPressable } from "./hover";
 import { containerParams, workspaceParams } from "./screen";
 import {
@@ -228,7 +229,7 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
 
   return (
     <SidebarRow
-      icon="Container"
+      icon={DEVCONTAINERS_ICON}
       label={label}
       active={currentScreen?.screenId === SCREEN_ID}
       onPress={() => openPopover(ContainersPopover)}

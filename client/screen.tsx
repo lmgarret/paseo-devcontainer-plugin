@@ -3,6 +3,7 @@ import { Icon, Loading, ScrollView, useToast } from "@getpaseo/plugin/client/ui"
 import { useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
 import { CARD_INDENT, ContainerRow } from "./actions";
+import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
 import { FolderIcon, ProjectIcon } from "./project-icon";
 import { settingsDefinition } from "../shared/contract";
 import { HoverPressable } from "./hover";
@@ -57,6 +58,7 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
       },
       top: { flexDirection: "row" as const, alignItems: "flex-start" as const, gap: 16 },
       heading: { flex: 1, gap: 4 },
+      titleRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10 },
       h1: { color: theme.colors.foreground, fontSize: layout.compact ? 20 : 24, fontWeight: "600" as const },
       summary: { color: theme.colors.foregroundMuted, fontSize: 13 },
       button: {
@@ -232,7 +234,10 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
     <ScrollView style={styles.root} contentContainerStyle={styles.content}>
       <View style={styles.top}>
         <View style={styles.heading}>
-          <Text style={styles.h1}>Dev containers</Text>
+          <View style={styles.titleRow}>
+            <Icon icon={DEVCONTAINERS_ICON} size={layout.compact ? 20 : 22} color={theme.colors.foregroundMuted} />
+            <Text style={styles.h1}>Dev containers</Text>
+          </View>
           {summary ? <Text style={styles.summary}>{summary}</Text> : null}
         </View>
         <HoverPressable

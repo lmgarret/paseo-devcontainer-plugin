@@ -3,6 +3,7 @@ import { ContainersScreen, workspaceParams } from "./client/screen";
 import { DevcontainerSettingsScreen } from "./client/settings";
 import { DevcontainerSidebarItem, SCREEN_ID, setSettingsOpener } from "./client/sidebar";
 import { ACTION_META } from "./client/actions";
+import { DEVCONTAINERS_ICON } from "./client/devcontainers-icon";
 import { commandActions, type UiAction } from "./client/state";
 import { type Container, openShellRpc, runActionRpc, statusRpc } from "./shared/contract";
 
@@ -21,13 +22,13 @@ export default function contribute(client: PluginClientContext) {
   client.addSettingsScreen({
     id: SETTINGS_ID,
     title: "Dev containers",
-    icon: "Container",
+    icon: DEVCONTAINERS_ICON,
     Component: DevcontainerSettingsScreen,
   });
   client.addCommandCenterItem({
     id: "devcontainers-open",
     title: "Dev containers",
-    icon: "Boxes",
+    icon: DEVCONTAINERS_ICON,
     keywords: KEYWORDS,
     context: "global",
     onSelect({ openScreen }) {

@@ -6,6 +6,7 @@
     "paseo-plugin.json",
     "OVERVIEW.md",
     "OVERVIEW.*.md",
+    "assets/icon.png",
     "index.client.ts",
     "index.client.tsx",
     "index.server.ts",

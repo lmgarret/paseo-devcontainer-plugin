@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/devcontainers-logo.svg" width="96" alt="Dev Containers logo"></p>
+
 # Paseo dev container plugin
 
 A [Paseo](https://paseo.sh) plugin to start, stop and rebuild dev containers, keep the Paseo daemon inside each one running, and forward container ports to your machine, without opening VS Code.
@@ -32,3 +34,5 @@ Layout: `index.client.tsx` and `client/` run in the app, `index.server.ts` and `
 ## License
 
 [MIT](LICENSE)
+
+The Dev Containers logo is the [Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons) "Cube" icon, MIT, Copyright (c) Microsoft Corporation. This plugin is not affiliated with the Development Containers project.
