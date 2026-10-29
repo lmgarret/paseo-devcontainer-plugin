@@ -175,7 +175,7 @@ function ContainersPopover({ theme, layout, host, close, openScreen }: PluginPop
           state={state}
           hostId={host.id}
           variant="popover"
-          onShell={showWorkspace}
+          onOpenWorkspace={showWorkspace}
           onPress={() => showContainer(view.container.repoPath)}
           pressLabel={`Show ${view.container.name}`}
         />

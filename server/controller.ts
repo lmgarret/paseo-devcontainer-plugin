@@ -1,12 +1,16 @@
 /// <reference types="node" />
-import { existsSync } from "node:fs";
-import type { Action, Container, DevcontainerSettings, Job, Status } from "../shared/contract";
+import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { type Action, ACTION_LABELS, type Container, type DevcontainerSettings, type Job, type Status } from "../shared/contract";
 import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
 import { PortForwarder } from "./forwarder";
 import { type ProjectIcon, readProjectIcon } from "./icons";
 import { resolveTool, run, toolEnv } from "./process";
 
 const LOG_LINES = 40;
+// Full job logs, one file per repository, followed by the log terminal.
+const LOG_DIR = join(tmpdir(), "paseo-devcontainer-logs");
 const STATUS_CACHE_MS = 2_000;
 const DAEMON_START_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 10 * 60_000;
@@ -116,15 +120,19 @@ export class DevcontainerController {
     };
     this.jobs.set(repoPath, job);
     this.cached = null;
-    void this.execute(repoPath, job)
+    const file = logFile(repoPath);
+    resetLog(file, `── ${ACTION_LABELS[action]} · ${repoPath} · ${new Date(job.startedAt).toLocaleString()}`);
+    void this.execute(repoPath, job, file)
       .then(
         () => {
           job.state = "succeeded";
           job.phase = "Done";
+          appendLog(file, `✔ ${ACTION_LABELS[action]} done`);
         },
         (error: unknown) => {
           job.state = "failed";
           job.error = error instanceof Error ? error.message : String(error);
+          appendLog(file, `✖ ${ACTION_LABELS[action]} failed: ${job.error}`);
           console.error(`[devcontainer-host] ${action} ${repoPath} failed:`, job.error);
         },
       )
@@ -152,6 +160,27 @@ export class DevcontainerController {
       `${USE_SSH_AGENT}if command -v bash >/dev/null; then exec bash -l; else exec sh -l; fi`,
     );
     return { name: `${candidate.name} (container)`, command: tools.docker, args };
+  }
+
+  // Whether the folder has no container yet, so starting it builds one.
+  async containerMissing(repoPath: string): Promise<boolean> {
+    const { candidates } = await this.discover();
+    return !candidates.find((entry) => entry.repoPath === repoPath)?.container;
+  }
+
+  // Command that shows the folder's latest job log and follows it, across later jobs too.
+  logCommand(repoPath: string): { name: string; command: string; args: string[] } {
+    const file = logFile(repoPath);
+    if (!existsSync(file)) throw new Error("No log yet for this dev container");
+    const name = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
+    // -F reopens the file when a new job replaces it.
+    return { name: `${name} (dev container log)`, command: "/bin/sh", args: ["-c", 'exec tail -n +1 -F "$1"', "sh", file] };
+  }
+
+  dismiss(repoPath: string): void {
+    if (this.jobs.get(repoPath)?.state === "running") throw new Error("The job is still running");
+    this.jobs.delete(repoPath);
+    this.cached = null;
   }
 
   async projectIcon(projectId: string): Promise<ProjectIcon | null> {
@@ -270,11 +299,12 @@ export class DevcontainerController {
     }
   }
 
-  private async execute(repoPath: string, job: Job): Promise<void> {
+  private async execute(repoPath: string, job: Job, file: string): Promise<void> {
     const log: Log = (line) => {
       // devcontainer CLI prefixes every line with an ISO timestamp.
       const text = line.replace(/^\[\d{4}-\d\d-\d\dT[\d:.]+Z\]\s?/, "").trim();
       if (!text) return;
+      appendLog(file, text);
       job.log.push(text);
       if (job.log.length > LOG_LINES) job.log.splice(0, job.log.length - LOG_LINES);
     };
@@ -309,8 +339,10 @@ export class DevcontainerController {
         return;
       }
       case "start":
-      case "rebuild": {
-        const target = await this.up(settings, tools, candidate, job.action === "rebuild", phase, log);
+      case "rebuild":
+      case "rebuild-no-cache": {
+        const rebuild = job.action === "start" ? null : { noCache: job.action === "rebuild-no-cache" };
+        const target = await this.up(settings, tools, candidate, rebuild, phase, log);
         await this.ensureDaemon(settings, docker, target, repoPath, phase, log);
         return;
       }
@@ -327,7 +359,7 @@ export class DevcontainerController {
     settings: DevcontainerSettings,
     tools: Tools,
     candidate: Candidate,
-    rebuild: boolean,
+    rebuild: { noCache: boolean } | null,
     phase: (text: string) => void,
     log: Log,
   ): Promise<Target> {
@@ -339,6 +371,7 @@ export class DevcontainerController {
     const args = ["up", "--workspace-folder", candidate.repoPath];
     if (candidate.configFile) args.push("--config", candidate.configFile);
     if (rebuild) args.push("--remove-existing-container");
+    if (rebuild?.noCache) args.push("--build-no-cache");
     if (settings.dotfilesRepository) {
       args.push("--dotfiles-repository", settings.dotfilesRepository);
       if (settings.dotfilesTargetPath) args.push("--dotfiles-target-path", settings.dotfilesTargetPath);
@@ -489,6 +522,32 @@ function sshAgentSource(settings: DevcontainerSettings, log: Log): string | null
   if (socket && existsSync(socket)) return socket;
   log("No SSH agent found ($SSH_AUTH_SOCK); the container will not get one.");
   return null;
+}
+
+function logFile(repoPath: string): string {
+  let hash = 5381;
+  for (let index = 0; index < repoPath.length; index++) hash = ((hash * 33) ^ repoPath.charCodeAt(index)) >>> 0;
+  const tail = (repoPath.split("/").filter(Boolean).pop() ?? "repo").replace(/[^\w.-]+/g, "-");
+  return join(LOG_DIR, `${tail}-${hash.toString(36)}.log`);
+}
+
+// A new file rather than a truncation, so a following `tail -F` starts over cleanly.
+function resetLog(file: string, header: string): void {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    writeFileSync(`${file}.new`, `${header}\n`);
+    renameSync(`${file}.new`, file);
+  } catch (error) {
+    console.error("[devcontainer-host] could not create the job log:", error);
+  }
+}
+
+function appendLog(file: string, line: string): void {
+  try {
+    appendFileSync(file, `${line}\n`);
+  } catch {
+    // The in-memory tail still shows in the app.
+  }
 }
 
 function lastLine(text: string): string {

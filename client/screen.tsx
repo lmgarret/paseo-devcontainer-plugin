@@ -217,7 +217,7 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
       view={view}
       state={state}
       variant={variant}
-      onShell={(workspaceId) => openWorkspace({ workspaceId })}
+      onOpenWorkspace={(workspaceId) => openWorkspace({ workspaceId })}
       onToggleHidden={() => toggleHidden(view.container.repoPath)}
       {...(variant === "card"
         ? {

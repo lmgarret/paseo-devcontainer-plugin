@@ -1,5 +1,14 @@
 import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin/server";
-import { openShellRpc, projectIconRpc, runActionRpc, settingsDefinition, statusRpc } from "./shared/contract";
+import {
+  type Action,
+  dismissJobRpc,
+  openLogsRpc,
+  openShellRpc,
+  projectIconRpc,
+  runActionRpc,
+  settingsDefinition,
+  statusRpc,
+} from "./shared/contract";
 import type { PaseoCatalog, WorkspaceRef } from "./server/discovery";
 import { DevcontainerController } from "./server/controller";
 import { resolveTool } from "./server/process";
@@ -78,15 +87,49 @@ export default function contribute(server: PluginServerContext) {
     paseo = context.paseo;
     return controller.status();
   });
-  server.handle(runActionRpc, ({ repoPath, action }, context) => {
+  // Terminals belong to a workspace: reuse the one for this folder, or open it.
+  const openLogs = async (api: PluginHandlerContext["paseo"], repoPath: string) => {
+    const log = controller.logCommand(repoPath);
+    const workspace = await api.workspaces.open({ cwd: repoPath });
+    // One log terminal per folder: replace an earlier one so it starts from the top.
+    const { entries } = await workspace.terminals.list();
+    await Promise.all(
+      entries.filter((entry) => entry.name === log.name).map((entry) => api.terminals.ref(entry).kill().catch(() => {})),
+    );
+    const terminal = await workspace.terminals.create(log);
+    return { workspaceId: workspace.id, terminalId: terminal.id };
+  };
+  // Builds are slow and fail in ways worth reading; a start of an existing container is quick.
+  const builds = async (repoPath: string, action: Action) =>
+    action === "rebuild" || action === "rebuild-no-cache" || (action === "start" && (await controller.containerMissing(repoPath)));
+
+  server.handle(runActionRpc, async ({ repoPath, action }, context) => {
     paseo = context.paseo;
-    return { job: controller.startAction(repoPath, action) };
+    const current = await settings.read();
+    const showLog = current.status === "ready" && current.values.openBuildLogs && (await builds(repoPath, action));
+    const job = controller.startAction(repoPath, action);
+    let logWorkspaceId: string | null = null;
+    if (showLog) {
+      try {
+        logWorkspaceId = (await openLogs(context.paseo, repoPath)).workspaceId;
+      } catch (error) {
+        console.error("[devcontainer-host] could not open the build log:", error);
+      }
+    }
+    return { job, logWorkspaceId };
+  });
+  server.handle(openLogsRpc, ({ repoPath }, context) => {
+    paseo = context.paseo;
+    return openLogs(context.paseo, repoPath);
+  });
+  server.handle(dismissJobRpc, ({ repoPath }) => {
+    controller.dismiss(repoPath);
+    return {};
   });
   server.handle(projectIconRpc, async ({ projectId }) => ({ icon: await controller.projectIcon(projectId) }));
   server.handle(openShellRpc, async ({ repoPath }, context) => {
     paseo = context.paseo;
     const shell = await controller.shellCommand(repoPath);
-    // Terminals belong to a workspace: reuse the one for this folder, or open it.
     const workspace = await context.paseo.workspaces.open({ cwd: repoPath });
     const terminal = await workspace.terminals.create({
       name: shell.name,
