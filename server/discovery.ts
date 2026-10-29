@@ -32,6 +32,8 @@ export interface DockerContainer {
   name: string;
   running: boolean;
   createdAt: string;
+  // When the container last started, in ms; null when it never ran.
+  startedAt: number | null;
   localFolder: string;
   configFile: string | null;
   remoteUser: string;
@@ -61,7 +63,7 @@ interface InspectResult {
   Id: string;
   Name: string;
   Created: string;
-  State: { Status: string };
+  State: { Status: string; StartedAt?: string };
   Config: { User?: string; Env?: string[] | null; Labels?: Record<string, string> | null };
   Mounts?: InspectMount[];
 }
@@ -100,12 +102,19 @@ function toDockerContainer(raw: InspectResult): DockerContainer {
     name: raw.Name.replace(/^\//, ""),
     running: raw.State.Status === "running",
     createdAt: raw.Created,
+    startedAt: startedAtOf(raw.State.StartedAt),
     localFolder: labels["devcontainer.local_folder"] ?? "",
     configFile: labels["devcontainer.config_file"] ?? null,
     remoteUser,
     workspaceFolder: workspaceFolderOf(raw, labels["devcontainer.local_folder"]),
     paseoHome: paseoHomeOf(raw, remoteUser),
   };
+}
+
+function startedAtOf(value: string | undefined): number | null {
+  const time = value ? Date.parse(value) : Number.NaN;
+  // Docker reports 0001-01-01 for containers that never started.
+  return Number.isFinite(time) && time > 0 ? time : null;
 }
 
 function hostPathOf(mount: InspectMount): string {

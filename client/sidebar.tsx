@@ -80,7 +80,8 @@ function ContainersPopover({ theme, layout, host, close, openScreen }: PluginPop
   const shown = active.slice(0, POPOVER_LIMIT);
   const styles = useMemo(
     () => ({
-      root: { maxWidth: 460 },
+      // Wide enough that a project name and a short state fit without truncation.
+      root: { minWidth: layout.compact ? undefined : 320, maxWidth: 460 },
       muted: { color: theme.colors.foregroundMuted, fontSize: 13, paddingHorizontal: 8, paddingVertical: 6 },
       danger: { color: theme.colors.statusDanger, fontSize: 12, paddingHorizontal: 8, paddingVertical: 4 },
       footer: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
@@ -171,11 +172,12 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
   useToasts(state);
   const active = sortActive(state.views);
   const busy = active.find((view) => view.kind === "busy");
-  // Hidden containers stay out of the sidebar entirely, count included.
-  const running = state.views.filter((view) => !view.container.hidden && view.container.docker === "running").length;
-  const label = busy
-    ? `${busy.container.name}: ${busy.label}`
-    : `Dev containers · ${running > 0 ? `${running} running` : "none running"}`;
+  // Hidden containers stay out of the sidebar entirely, counts included.
+  const shown = state.views.filter((view) => !view.container.hidden);
+  const starting = shown.filter((view) => view.kind === "busy").length;
+  const running = shown.filter((view) => view.kind !== "busy" && view.container.docker === "running").length;
+  const counts = [running > 0 ? `${running} running` : null, starting > 0 ? `${starting} starting` : null].filter(Boolean);
+  const label = `Dev containers · ${counts.length > 0 ? counts.join(", ") : "none running"}`;
   // The first active view is the most urgent one.
   const lead = active[0];
 

@@ -35,6 +35,8 @@ const ACTION_TOOLTIPS: Record<UiAction, string> = {
   shell: "Open a shell in the container",
 };
 const TOOLTIP_DELAY_MS = 350;
+// Rows wait longer so passing over them on the way to an icon shows nothing.
+const ROW_TOOLTIP_DELAY_MS = 700;
 // Safety net for a missed hover-out.
 const TOOLTIP_MAX_MS = 4_000;
 let activeTooltip: { current: () => void } | null = null;
@@ -76,6 +78,8 @@ export function ContainerRow({
   const [hovered, setHovered] = useState(false);
   // A visible tooltip lifts the row above its siblings so the bubble is not painted over.
   const [tooltipShown, setTooltipShown] = useState(false);
+  // Hovering the row itself shows its full, untruncated text.
+  const rowTooltip = useTooltip(ROW_TOOLTIP_DELAY_MS, setTooltipShown);
   const { container } = view;
   const page = variant === "page";
   const hit = layout.compact ? 32 : 22;
@@ -87,9 +91,10 @@ export function ContainerRow({
       lead: { width: 16, alignItems: "center" as const, justifyContent: "center" as const },
       dot: { width: 7, height: 7, borderRadius: 4 },
       text: { flex: 1, minWidth: 0, flexDirection: "row" as const, alignItems: "baseline" as const, gap: 6 },
-      name: { color: theme.colors.foreground, fontSize: 14, flexShrink: 1 },
-      muted: { color: theme.colors.foregroundMuted, fontSize: 12, flexShrink: 2 },
-      danger: { color: theme.colors.statusDanger, fontSize: 12, flexShrink: 2 },
+      // The name keeps its width; the muted context truncates first.
+      name: { color: theme.colors.foreground, fontSize: 14, flexShrink: 0, maxWidth: "70%" as const },
+      muted: { color: theme.colors.foregroundMuted, fontSize: 12, flexShrink: 1 },
+      danger: { color: theme.colors.statusDanger, fontSize: 12, flexShrink: 1 },
       icons: { flexDirection: "row" as const, alignItems: "center" as const },
       confirm: { color: theme.colors.foreground, fontSize: 12, marginRight: 2 },
       sub: { color: theme.colors.foregroundMuted, fontSize: 11, paddingLeft: 24 },
@@ -133,6 +138,7 @@ export function ContainerRow({
       disabled={disabled}
       onPress={onPress}
       onTooltip={setTooltipShown}
+      onHoverStart={rowTooltip.hide}
     />
   );
 
@@ -141,10 +147,18 @@ export function ContainerRow({
     job?.state === "failed" && job.endedAt !== null && Date.now() - job.endedAt < FAILURE_VISIBLE_MS ? job : null;
   const color = kindColor(view.kind, theme);
   const where = workspaceLabel(container);
+  // A project's main checkout is the default; only worktrees need their workspace named in the popover.
+  const mainCheckout = !container.workspace && container.project?.rootPath === container.repoPath;
+  const popoverWhere = mainCheckout ? null : where;
   // Online and stopped are carried by the dot; other states are worth words.
   const quiet = view.kind === "online" || (view.kind === "stopped" && container.docker === "stopped");
   const title = page ? where : container.name;
-  const context = page ? (quiet ? null : view.label) : quiet ? where : `${where} · ${view.label}`;
+  const context = page
+    ? quiet
+      ? null
+      : view.label
+    : [popoverWhere, quiet ? null : view.label].filter(Boolean).join(" · ") || null;
+  const fullText = [title, page ? null : where, view.label, view.detail].filter(Boolean).join(" · ");
   const host = view.host
     ? `${view.host.label} ${view.host.status}`
     : container.serverId
@@ -173,10 +187,17 @@ export function ContainerRow({
       accessibilityRole={openable ? "link" : undefined}
       accessibilityLabel={openable ? `Open ${title}` : undefined}
       onPress={openable ? () => void open() : undefined}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
+      onHoverIn={() => {
+        setHovered(true);
+        rowTooltip.showLater();
+      }}
+      onHoverOut={() => {
+        setHovered(false);
+        rowTooltip.hide();
+      }}
       style={[styles.row, hovered && styles.hovered, tooltipShown && { zIndex: 10 }]}
     >
+      {rowTooltip.shown ? <TooltipBubble theme={theme} text={fullText} top={layout.compact ? 40 : 30} align="left" /> : null}
       <View style={styles.line}>
         <View style={styles.lead}>{status}</View>
         {page ? null : container.project ? (
@@ -263,41 +284,96 @@ interface IconButtonProps {
   disabled: boolean;
   onPress(): void;
   onTooltip(shown: boolean): void;
+  // Lets the row cancel its own pending tooltip when the pointer reaches an icon.
+  onHoverStart(): void;
 }
 
 // Ghost icon button with a hover background and a delayed tooltip below it, right-aligned so the
 // bubble grows inward from the row's right edge and stays inside the popover.
-function IconButton({ theme, icon, color, label, tooltip, size, disabled, onPress, onTooltip }: IconButtonProps) {
-  const [hovered, setHovered] = useState(false);
+// Delayed hover tooltip shared by icon buttons and rows: one visible at a time, and handlers read
+// refs because the web Pressable can keep the first handler it was given.
+function useTooltip(delayMs: number, onChange?: (shown: boolean) => void) {
   const [shown, setShown] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Handlers can be captured once by the web Pressable, so they read refs rather than state.
-  const onTooltipRef = useRef(onTooltip);
-  onTooltipRef.current = onTooltip;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const hideRef = useRef<() => void>(() => {});
 
   hideRef.current = () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
-    setHovered(false);
     setShown(false);
-    onTooltipRef.current(false);
+    onChangeRef.current?.(false);
     if (activeTooltip === hideRef) activeTooltip = null;
   };
-  const hoverIn = () => {
-    setHovered(true);
+  const showLater = () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
-      // Only one tooltip at a time, even if a hover-out was missed.
       if (activeTooltip && activeTooltip !== hideRef) activeTooltip.current();
       activeTooltip = hideRef;
       setShown(true);
-      onTooltipRef.current(true);
+      onChangeRef.current?.(true);
+      // Safety net for a missed hover-out.
       timer.current = setTimeout(() => hideRef.current(), TOOLTIP_MAX_MS);
-    }, TOOLTIP_DELAY_MS);
+    }, delayMs);
   };
-  const hoverOut = () => hideRef.current();
   useEffect(() => () => hideRef.current(), []);
+  return { shown, showLater, hide: () => hideRef.current() };
+}
+
+function TooltipBubble({ theme, text, top, align }: { theme: PluginHostProps["theme"]; text: string; top: number; align: "left" | "right" }) {
+  return (
+    <View
+      pointerEvents="none"
+      style={{
+        position: "absolute",
+        top,
+        ...(align === "right" ? { right: 0, alignItems: "flex-end" as const } : { left: 0, alignItems: "flex-start" as const }),
+        width: 320,
+        zIndex: 100,
+      }}
+    >
+      <View
+        style={{
+          paddingHorizontal: 8,
+          paddingVertical: 4,
+          borderRadius: 6,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          backgroundColor: theme.colors.surface2,
+        }}
+      >
+        <Text style={{ color: theme.colors.foreground, fontSize: 12 }} numberOfLines={2}>
+          {text}
+        </Text>
+      </View>
+    </View>
+  );
+}
+
+function IconButton({
+  theme,
+  icon,
+  color,
+  label,
+  tooltip,
+  size,
+  disabled,
+  onPress,
+  onTooltip,
+  onHoverStart,
+}: IconButtonProps) {
+  const [hovered, setHovered] = useState(false);
+  const bubble = useTooltip(TOOLTIP_DELAY_MS, onTooltip);
+  const hoverIn = () => {
+    setHovered(true);
+    onHoverStart();
+    bubble.showLater();
+  };
+  const hoverOut = () => {
+    setHovered(false);
+    bubble.hide();
+  };
 
   return (
     <View style={{ position: "relative" }}>
@@ -306,7 +382,7 @@ function IconButton({ theme, icon, color, label, tooltip, size, disabled, onPres
         accessibilityLabel={label}
         disabled={disabled}
         onPress={() => {
-          hideRef.current();
+          hoverOut();
           onPress();
         }}
         onHoverIn={hoverIn}
@@ -323,27 +399,7 @@ function IconButton({ theme, icon, color, label, tooltip, size, disabled, onPres
       >
         <Icon name={icon} size={14} color={color} />
       </Pressable>
-      {shown ? (
-        <View
-          pointerEvents="none"
-          style={{ position: "absolute", top: size + 4, right: 0, width: 240, alignItems: "flex-end", zIndex: 100 }}
-        >
-          <View
-            style={{
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 6,
-              borderWidth: 1,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.surface2,
-            }}
-          >
-            <Text style={{ color: theme.colors.foreground, fontSize: 12 }} numberOfLines={1}>
-              {tooltip}
-            </Text>
-          </View>
-        </View>
-      ) : null}
+      {bubble.shown ? <TooltipBubble theme={theme} text={tooltip} top={size + 4} align="right" /> : null}
     </View>
   );
 }

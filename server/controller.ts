@@ -188,6 +188,7 @@ export class DevcontainerController {
           docker: container ? (container.running ? "running" : "stopped") : "missing",
           containerId: container?.id ?? null,
           containerName: container?.name ?? null,
+          startedAt: container?.running ? container.startedAt : null,
           serverId:
             detected || this.knownServerIds.get(candidate.repoPath) || null,
           paseoHomePersistent: container ? container.paseoHome.persistent : null,

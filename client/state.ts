@@ -1,6 +1,7 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { getPaseoClient, type PluginHostSummary, useHosts, useRpc } from "@getpaseo/plugin/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { type Action, type Container, openShellRpc, runActionRpc, type Status, statusRpc } from "../shared/contract";
 
 // Shell is client-driven: it opens a Paseo terminal rather than running a daemon job.
@@ -43,6 +44,12 @@ export function useStatusQuery() {
 
 export function useDevcontainers(): DevcontainersState {
   const hosts = useHosts();
+  // Time-based states such as "Reconnecting…" expire without new data, so re-derive regularly.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((tick) => tick + 1), 10_000);
+    return () => clearInterval(timer);
+  }, []);
   const query = useStatusQuery();
   const runAction = useRpc(runActionRpc);
   const queryClient = useQueryClient();
@@ -88,12 +95,16 @@ export function describe(container: Container, hosts: readonly PluginHostSummary
   };
 
   if (container.job?.state === "running") return view("busy", container.job.phase, []);
-  if (container.docker === "missing") return view("stopped", "Not created", ["start"]);
+  if (container.docker === "missing") return view("stopped", "Never started", ["start"]);
   if (container.docker === "stopped") return view("stopped", "Stopped", ["start"]);
   if (container.paseoInstalled === false) {
-    return view("warning", "Paseo not installed", ["install-paseo", ...RUNNING_ACTIONS]);
+    return view("warning", "No Paseo", ["install-paseo", ...RUNNING_ACTIONS]);
   }
   if (host?.status === "online") return view("online", "Online", RUNNING_ACTIONS);
+  // Right after a start the daemon boots and the app reconnects on its own: not a problem yet.
+  if (host && justStarted(container)) {
+    return view("busy", "Reconnecting…", RUNNING_ACTIONS, "The container just started; Paseo reconnects on its own.");
+  }
   if (container.daemonRunning === true) {
     if (!host) {
       const id = container.serverId ? ` (${container.serverId})` : "";
@@ -106,7 +117,21 @@ export function describe(container: Container, hosts: readonly PluginHostSummary
       "The daemon runs but the app cannot reach it.",
     );
   }
-  return view("warning", "Daemon down", ["start-daemon", ...RUNNING_ACTIONS]);
+  return view("warning", "Paseo stopped", ["start-daemon", ...RUNNING_ACTIONS]);
+}
+
+const RECONNECT_GRACE_MS = 90_000;
+
+function justStarted(container: Container): boolean {
+  const now = Date.now();
+  const job = container.job;
+  const startedByAction =
+    job?.state === "succeeded" &&
+    (job.action === "start" || job.action === "rebuild" || job.action === "start-daemon") &&
+    job.endedAt !== null &&
+    now - job.endedAt < RECONNECT_GRACE_MS;
+  const startedRecently = container.startedAt !== null && now - container.startedAt < RECONNECT_GRACE_MS;
+  return startedByAction || startedRecently;
 }
 
 const KIND_ORDER: Record<ViewKind, number> = { busy: 0, warning: 1, online: 2, stopped: 3 };

@@ -92,6 +92,8 @@ const containerSchema = z.object({
   docker: z.enum(["running", "stopped", "missing"]),
   containerId: z.string().nullable(),
   containerName: z.string().nullable(),
+  // When the container last started, in ms since the epoch.
+  startedAt: z.number().nullable(),
   // Paired Paseo host: daemon report, or the server-id file in a mounted Paseo home.
   serverId: z.string().nullable(),
   // False when the Paseo home is inside the container and a rebuild resets its identity.
