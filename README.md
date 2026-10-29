@@ -31,6 +31,10 @@ paseo plugin logs devcontainer-host
 
 Layout: `index.client.tsx` and `client/` run in the app, `index.server.ts` and `server/` run in the daemon, and `shared/` holds the RPC contracts used by both.
 
+## Releasing
+
+Git tags are the version: `package.json` has none, and Paseo pins installs to a tag or commit. Either push a `vX.Y.Z` tag, or run the Release workflow from the Actions tab, which picks the next version from the commits since the last tag. Both create a GitHub release with a generated changelog. Then submit the new tag to the Paseo plugin registry.
+
 ## License
 
 [MIT](LICENSE)
