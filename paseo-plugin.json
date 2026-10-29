@@ -1,0 +1,9 @@
+{
+  "id": "devcontainer-host",
+  "name": "Dev container host",
+  "description": "Start, stop and rebuild a dev container and its in-container Paseo daemon.",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.13.1"
+  }
+}

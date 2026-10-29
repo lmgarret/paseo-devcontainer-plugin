@@ -1,0 +1,200 @@
+import type { PluginPopoverProps, PluginSidebarItemProps } from "@getpaseo/plugin/client";
+import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
+import { useEffect, useMemo } from "react";
+import { ActivityIndicator, Text, View } from "react-native";
+import { ACTION_LABELS } from "../shared/contract";
+import { ContainerRow } from "./actions";
+import { HoverPressable } from "./hover";
+import { workspaceParams } from "./screen";
+import {
+  type ContainerView,
+  type DevcontainersState,
+  kindColor,
+  sortActive,
+  useDevcontainers,
+  type WorkspaceTarget,
+} from "./state";
+
+export const SCREEN_ID = "containers";
+
+// Popovers receive no settings navigation; the client entry provides it.
+let openSettings: (() => void) | null = null;
+export function setSettingsOpener(opener: () => void) {
+  openSettings = opener;
+}
+
+const POPOVER_LIMIT = 5;
+
+// Module scope so a remounted sidebar does not repeat toasts.
+const lastKinds = new Map<string, ContainerView["kind"]>();
+const notifiedJobs = new Set<string>();
+const loadedAt = Date.now();
+
+function useToasts(state: DevcontainersState) {
+  const toast = useToast();
+  const signature = state.views
+    .map((view) => `${view.container.repoPath}:${view.kind}:${view.host?.status}:${view.container.job?.state}`)
+    .join("|");
+
+  useEffect(() => {
+    const unreachable: string[] = [];
+    for (const view of state.views) {
+      const key = view.container.repoPath;
+      if (view.kind === "busy") continue;
+      // Only containers paired with this app: their host is the one shown as unreachable.
+      if (view.kind === "stopped" && view.host && view.host.status !== "online" && !view.container.hidden) {
+        if (lastKinds.get(key) !== "stopped") unreachable.push(view.container.name);
+      }
+      lastKinds.set(key, view.kind);
+    }
+
+    const finished = state.views.flatMap((view) => {
+      const job = view.container.job;
+      if (!job || job.state === "running" || !job.endedAt || job.endedAt < loadedAt) return [];
+      const id = `${view.container.repoPath}:${job.id}:${job.startedAt}`;
+      if (notifiedJobs.has(id)) return [];
+      notifiedJobs.add(id);
+      return [{ name: view.container.name, job }];
+    });
+
+    // A newer toast replaces the visible one, so show the most important message last.
+    if (unreachable.length > 0) {
+      toast.show(`${unreachable.join(", ")}: container host unreachable. Start devcontainer?`, {
+        variant: "warning",
+        durationMs: 6_000,
+      });
+    }
+    for (const { name, job } of finished) {
+      if (job.state === "succeeded") {
+        toast.show(`${name}: ${ACTION_LABELS[job.action]} done`, { variant: "success" });
+      } else {
+        toast.error(`${name}: ${ACTION_LABELS[job.action]} failed. ${job.error ?? ""}`.trim());
+      }
+    }
+  }, [signature, toast]);
+}
+
+function ContainersPopover({ theme, layout, host, close, openScreen }: PluginPopoverProps) {
+  const state = useDevcontainers();
+  const active = sortActive(state.views);
+  const shown = active.slice(0, POPOVER_LIMIT);
+  const styles = useMemo(
+    () => ({
+      root: { maxWidth: 460 },
+      muted: { color: theme.colors.foregroundMuted, fontSize: 13, paddingHorizontal: 8, paddingVertical: 6 },
+      danger: { color: theme.colors.statusDanger, fontSize: 12, paddingHorizontal: 8, paddingVertical: 4 },
+      footer: { flexDirection: "row" as const, alignItems: "center" as const, gap: 4 },
+      all: {
+        flex: 1,
+        flexDirection: "row" as const,
+        alignItems: "center" as const,
+        gap: 10,
+        paddingHorizontal: 8,
+        minHeight: layout.compact ? 46 : 36,
+        borderRadius: 6,
+      },
+      cog: {
+        width: layout.compact ? 40 : 30,
+        height: layout.compact ? 40 : 30,
+        borderRadius: 6,
+        alignItems: "center" as const,
+        justifyContent: "center" as const,
+      },
+      hovered: { backgroundColor: theme.colors.surface2 },
+      allText: { color: theme.colors.foreground, fontSize: 14 },
+      more: { color: theme.colors.foregroundMuted, fontSize: 12 },
+    }),
+    [theme, layout.compact],
+  );
+
+  // Popovers cannot navigate to a workspace; the screen does it from its params.
+  const showWorkspace = (target: WorkspaceTarget) => {
+    close();
+    openScreen({ screenId: SCREEN_ID, params: workspaceParams(target) });
+  };
+
+  return (
+    <View style={styles.root}>
+      {!state.status ? (
+        <Text style={styles.muted}>{state.error ? `Status unavailable: ${state.error}` : "Checking…"}</Text>
+      ) : null}
+      {state.status?.dockerError ? <Text style={styles.danger}>{state.status.dockerError}</Text> : null}
+      {state.status && shown.length === 0 ? <Text style={styles.muted}>No active dev containers</Text> : null}
+      {shown.map((view) => (
+        <ContainerRow
+          key={view.container.repoPath}
+          theme={theme}
+          layout={layout}
+          view={view}
+          state={state}
+          hostId={host.id}
+          variant="popover"
+          onShell={(workspaceId) => showWorkspace({ workspaceId })}
+          onOpenWorkspace={showWorkspace}
+        />
+      ))}
+      <View style={styles.footer}>
+        <HoverPressable
+          accessibilityRole="button"
+          accessibilityLabel="All dev containers"
+          onPress={() => openScreen({ screenId: SCREEN_ID })}
+          style={styles.all}
+          hoveredStyle={styles.hovered}
+        >
+          <View style={{ width: 16, alignItems: "center" }}>
+            <Icon name="Boxes" size={14} color={theme.colors.foregroundMuted} />
+          </View>
+          <Text style={styles.allText}>All dev containers</Text>
+          {active.length > shown.length ? <Text style={styles.more}>+{active.length - shown.length} active</Text> : null}
+        </HoverPressable>
+        {openSettings ? (
+          <HoverPressable
+            accessibilityRole="button"
+            accessibilityLabel="Dev container settings"
+            onPress={() => {
+              close();
+              openSettings?.();
+            }}
+            style={styles.cog}
+            hoveredStyle={styles.hovered}
+          >
+            <Icon name="Settings" size={15} color={theme.colors.foregroundMuted} />
+          </HoverPressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: PluginSidebarItemProps) {
+  const state = useDevcontainers();
+  useToasts(state);
+  const active = sortActive(state.views);
+  const busy = active.find((view) => view.kind === "busy");
+  // Hidden containers stay out of the sidebar entirely, count included.
+  const running = state.views.filter((view) => !view.container.hidden && view.container.docker === "running").length;
+  const label = busy
+    ? `${busy.container.name}: ${busy.label}`
+    : `Dev containers · ${running > 0 ? `${running} running` : "none running"}`;
+  // The first active view is the most urgent one.
+  const lead = active[0];
+
+  return (
+    <SidebarRow
+      icon="Container"
+      label={label}
+      active={currentScreen?.screenId === SCREEN_ID}
+      onPress={() => openPopover(ContainersPopover)}
+      trailing={
+        busy ? (
+          <ActivityIndicator size="small" color={kindColor("busy", theme)} style={{ marginRight: 4 }} />
+        ) : lead ? (
+          <View
+            accessibilityLabel={lead.label}
+            style={{ width: 8, height: 8, borderRadius: 4, marginRight: 4, backgroundColor: kindColor(lead.kind, theme) }}
+          />
+        ) : null
+      }
+    />
+  );
+}

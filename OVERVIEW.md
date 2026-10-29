@@ -1,0 +1,36 @@
+Start, stop, and rebuild your dev containers from Paseo, open a shell in them, and keep the Paseo daemon inside each one running, without opening VS Code.
+
+## How it finds dev containers
+
+The plugin lists:
+
+- every Paseo project on this host with a `.devcontainer/devcontainer.json` or `.devcontainer.json`, even if its container was never built;
+- every running container created by VS Code or the `devcontainer` CLI, and stopped ones whose folder is still a Paseo workspace;
+- repositories you add in settings.
+
+Each container is linked to its Paseo project and workspace on this host, and shown with the project's icon. The Paseo daemon inside a container is matched to the host you paired in the app by its server ID, read from the daemon while the container runs, or from the `server-id` file when its Paseo home is mounted from this machine.
+
+## What you get
+
+A "Dev containers" row in the sidebar footer shows how many containers run. Its popover lists up to five active containers, those running, busy, or paired with the app, with a status dot and icon actions:
+
+- start, stop, and rebuild, with stop and rebuild asking for confirmation because agents in the container stop with it;
+- start the Paseo daemon when it is down, or install Paseo when it is missing;
+- open a shell: a Paseo terminal in the project's workspace running `docker exec` into the container.
+
+Pressing a row opens its workspace, on the container's own Paseo host when it is online. When a paired container stops, a toast suggests starting it. The "All dev containers" page groups every container by project, shows its branch or workspace, container, and paired host, and lets you hide a container from the sidebar. The Command Center lists the actions valid for each container.
+
+## Setup
+
+Install the plugin on the daemon of the machine that runs Docker, not on a daemon inside a container. That machine needs Docker and the `devcontainer` CLI (`@devcontainers/cli`). Pair each container's Paseo daemon with the app once.
+
+Settings:
+
+- Discovery: scan Paseo projects for dev container configs, and add other repositories.
+- Paseo in containers: the install command, run as the container's remote user, defaulting to `npm install -g @getpaseo/cli`, and whether Start and Rebuild run it when Paseo is missing.
+- Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.
+- Advanced: paths to `docker` and `devcontainer` when they are not on the daemon's PATH, in Homebrew, Docker Desktop, or nvm.
+
+## Limits
+
+A daemon keeps its server ID across rebuilds only if its Paseo home is on a mount; the page warns when it is not. Containers created by the plugin do not get VS Code's SSH agent forwarding. The plugin cannot pair hosts or change Paseo's built-in "host unreachable" screen.

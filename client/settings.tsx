@@ -1,0 +1,121 @@
+import { type PluginSurfaceProps, useSettings } from "@getpaseo/plugin/client";
+import {
+  SettingsAction,
+  SettingsCard,
+  SettingsInput,
+  SettingsSection,
+  SettingsSwitch,
+} from "@getpaseo/plugin/client/ui";
+import { useState } from "react";
+import { Text, View } from "react-native";
+import { type DevcontainerSettings, settingsDefinition } from "../shared/contract";
+
+type TextField =
+  | "installCommand"
+  | "dockerPath"
+  | "devcontainerPath"
+  | "dotfilesRepository"
+  | "dotfilesTargetPath"
+  | "dotfilesInstallCommand";
+
+
+function splitPaths(text: string): string[] {
+  return text
+    .split(/[\n,]/)
+    .map((path) => path.trim())
+    .filter(Boolean);
+}
+
+export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
+  const settings = useSettings(settingsDefinition);
+  const [draft, setDraft] = useState<Partial<DevcontainerSettings>>({});
+  const [advanced, setAdvanced] = useState(false);
+
+  if (settings.status !== "ready") {
+    const message = settings.status === "loading" ? "Loading…" : `Settings unavailable: ${settings.error}`;
+    return <Text style={{ color: theme.colors.foregroundMuted }}>{message}</Text>;
+  }
+  const { values, revision } = settings;
+  const current = { ...values, ...draft };
+  const dirty = Object.keys(draft).length > 0;
+
+  // Saving remounts the inputs (keyed by revision), so every save includes the draft.
+  async function save(patch: Partial<DevcontainerSettings> = {}) {
+    if (await settings.save({ ...values, ...draft, ...patch }, revision)) setDraft({});
+  }
+
+  const input = (key: TextField, label: string, hint?: string, placeholder?: string) => (
+    <SettingsInput
+      key={`${key}-${revision}`}
+      label={label}
+      hint={hint}
+      placeholder={placeholder}
+      initialValue={values[key]}
+      onChangeText={(text) => setDraft((previous) => ({ ...previous, [key]: text.trim() }))}
+    />
+  );
+
+  return (
+    <View style={{ gap: 24 }}>
+      <SettingsSection title="Discovery">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Scan Paseo projects"
+            hint="List projects with a .devcontainer config."
+            value={current.scanPaseoProjects}
+            disabled={settings.saving}
+            onValueChange={(scanPaseoProjects) => void save({ scanPaseoProjects })}
+          />
+          <SettingsInput
+            key={`extra-${revision}`}
+            label="Extra repositories"
+            placeholder="/path/to/repo, …"
+            initialValue={values.extraRepoPaths.join(", ")}
+            onChangeText={(text) => setDraft((previous) => ({ ...previous, extraRepoPaths: splitPaths(text) }))}
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Paseo in containers">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Install automatically"
+            hint="Start and Rebuild install Paseo when it is missing."
+            value={current.autoInstallPaseo}
+            disabled={settings.saving}
+            onValueChange={(autoInstallPaseo) => void save({ autoInstallPaseo })}
+          />
+          {input("installCommand", "Install command")}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Dotfiles">
+        <SettingsCard>
+          {input("dotfilesRepository", "Repository", "Cloned into new containers, like VS Code's dotfiles setting.", "owner/repo")}
+          {input("dotfilesTargetPath", "Target path", undefined, "~/dotfiles")}
+          {input("dotfilesInstallCommand", "Install command", undefined, "Detected")}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Advanced">
+        <SettingsCard>
+          <SettingsSwitch label="Show tool paths" value={advanced} onValueChange={setAdvanced} />
+          {advanced ? input("dockerPath", "docker path", undefined, "Detected") : null}
+          {advanced ? input("devcontainerPath", "devcontainer path", undefined, "Detected") : null}
+        </SettingsCard>
+      </SettingsSection>
+
+      {dirty || settings.saveError ? (
+        <SettingsCard>
+          <SettingsAction
+            label="Unsaved changes"
+            error={settings.saveError ?? undefined}
+            actionLabel="Save"
+            disabled={!dirty || settings.saving}
+            onPress={() => void save()}
+          />
+        </SettingsCard>
+      ) : null}
+    </View>
+  );
+}

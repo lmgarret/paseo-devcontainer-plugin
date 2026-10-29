@@ -1,0 +1,135 @@
+import { defineRpc, defineSettings } from "@getpaseo/plugin";
+import { z } from "zod";
+
+export const DEFAULT_INSTALL_COMMAND = "npm install -g @getpaseo/cli";
+
+const generalShape = {
+  autoInstallPaseo: z.boolean().default(false),
+  // Runs in the container as the remote user with `bash -lc`.
+  installCommand: z.string().default(DEFAULT_INSTALL_COMMAND),
+  // Empty: resolved from PATH and common install locations.
+  dockerPath: z.string().default(""),
+  devcontainerPath: z.string().default(""),
+  // Mirrors VS Code's dotfiles settings; only applied when a container is created.
+  dotfilesRepository: z.string().default(""),
+  dotfilesTargetPath: z.string().default(""),
+  dotfilesInstallCommand: z.string().default(""),
+};
+
+export const settingsDefinition = defineSettings({
+  id: "devcontainer",
+  scope: "host",
+  version: 2,
+  schema: z.object({
+    ...generalShape,
+    // Offer every Paseo project on this host that has a dev container config.
+    scanPaseoProjects: z.boolean().default(true),
+    // Repositories to offer even when they are not Paseo projects.
+    extraRepoPaths: z.array(z.string()).default([]),
+    // Repository paths kept out of the sidebar popover.
+    hidden: z.array(z.string()).default([]),
+    // Project groups folded on the "All dev containers" page.
+    collapsedGroups: z.array(z.string()).default([]),
+  }),
+  migrate(values, fromVersion) {
+    if (fromVersion !== 1 || typeof values !== "object" || values === null) return {};
+    const v1 = values as Record<string, unknown>;
+    const general = Object.fromEntries(
+      Object.keys(generalShape).filter((key) => key in v1).map((key) => [key, v1[key]]),
+    );
+    const repoPath = typeof v1.repoPath === "string" ? v1.repoPath : "";
+    return { ...general, extraRepoPaths: repoPath ? [repoPath] : [] };
+  },
+});
+
+export type DevcontainerSettings = z.output<typeof settingsDefinition.schema>;
+
+export const actionSchema = z.enum(["start", "rebuild", "stop", "start-daemon", "install-paseo"]);
+export type Action = z.infer<typeof actionSchema>;
+
+export const ACTION_LABELS: Record<Action, string> = {
+  start: "Start",
+  rebuild: "Rebuild",
+  stop: "Stop",
+  "start-daemon": "Start Paseo daemon",
+  "install-paseo": "Install Paseo",
+};
+
+const jobSchema = z.object({
+  id: z.number(),
+  action: actionSchema,
+  state: z.enum(["running", "succeeded", "failed"]),
+  phase: z.string(),
+  log: z.array(z.string()),
+  startedAt: z.number(),
+  endedAt: z.number().nullable(),
+  error: z.string().nullable(),
+});
+export type Job = z.infer<typeof jobSchema>;
+
+const containerSchema = z.object({
+  // Identity: the repository folder, as in the `devcontainer.local_folder` label.
+  repoPath: z.string(),
+  name: z.string(),
+  source: z.enum(["project", "container", "extra"]),
+  // The Paseo project on this host the folder belongs to, as a root checkout or a workspace.
+  project: z
+    .object({
+      id: z.string(),
+      key: z.string().nullable(),
+      name: z.string(),
+      rootPath: z.string(),
+      // Changes when the icon does, for client caching.
+      iconRevision: z.string(),
+    })
+    .nullable(),
+  // This host's Paseo workspace for the folder, when there is one.
+  workspace: z.object({ id: z.string(), title: z.string() }).nullable(),
+  branch: z.string().nullable(),
+  // The folder's path inside the container.
+  workspaceFolder: z.string().nullable(),
+  hidden: z.boolean(),
+  docker: z.enum(["running", "stopped", "missing"]),
+  containerId: z.string().nullable(),
+  containerName: z.string().nullable(),
+  // Paired Paseo host: daemon report, or the server-id file in a mounted Paseo home.
+  serverId: z.string().nullable(),
+  // False when the Paseo home is inside the container and a rebuild resets its identity.
+  paseoHomePersistent: z.boolean().nullable(),
+  // Null when the container is not running or the check failed.
+  paseoInstalled: z.boolean().nullable(),
+  daemonRunning: z.boolean().nullable(),
+  job: jobSchema.nullable(),
+});
+export type Container = z.infer<typeof containerSchema>;
+
+const statusSchema = z.object({
+  containers: z.array(containerSchema),
+  dockerError: z.string().nullable(),
+  tools: z.object({ docker: z.string().nullable(), devcontainer: z.string().nullable() }),
+});
+export type Status = z.infer<typeof statusSchema>;
+
+export const statusRpc = defineRpc({
+  name: "status.get",
+  input: z.object({}),
+  output: statusSchema,
+});
+
+export const runActionRpc = defineRpc({
+  name: "action.run",
+  input: z.object({ repoPath: z.string(), action: actionSchema }),
+  output: z.object({ job: jobSchema }),
+});
+
+export const openShellRpc = defineRpc({
+  name: "shell.open",
+  input: z.object({ repoPath: z.string() }),
+  output: z.object({ workspaceId: z.string(), terminalId: z.string() }),
+});
+
+export const projectIconRpc = defineRpc({
+  name: "project.icon",
+  input: z.object({ projectId: z.string() }),
+  output: z.object({ icon: z.object({ data: z.string(), mimeType: z.string() }).nullable() }),
+});
