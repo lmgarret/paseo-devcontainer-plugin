@@ -1,7 +1,6 @@
 {
   "name": "paseo-devcontainer-plugin",
   "private": true,
-  "version": "0.1.0",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
