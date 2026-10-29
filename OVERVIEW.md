@@ -40,7 +40,7 @@ Install the plugin on the daemon of the machine that runs Docker, not on a daemo
 Settings:
 
 - Discovery: scan Paseo projects for dev container configs, and add other repositories.
-- Paseo in containers: the install command, run as the container's remote user, defaulting to `npm install -g @getpaseo/cli`, and whether Start and Rebuild run it when Paseo is missing.
+- Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is off by default, so nothing is installed until you press Install Paseo or turn it on.
 - Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
 - Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.
 - Advanced: paths to `docker` and `devcontainer` when they are not on the daemon's PATH, in Homebrew, Docker Desktop, or nvm.

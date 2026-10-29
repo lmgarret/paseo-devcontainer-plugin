@@ -1,7 +1,7 @@
 {
   "name": "paseo-devcontainer-plugin",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "files": [
     "paseo-plugin.json",
     "OVERVIEW.md",
@@ -12,7 +12,8 @@
     "index.server.tsx",
     "client/",
     "server/",
-    "shared/"
+    "shared/",
+    "assets/"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit"
@@ -26,5 +27,17 @@
     "react-native": "0.81.5",
     "typescript": "^5.9.3",
     "zod": "^4.4.3"
-  }
+  },
+  "description": "Start, stop and rebuild dev containers and their in-container Paseo daemon from Paseo.",
+  "license": "MIT",
+  "author": "LM. Garret",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lmgarret/paseo-devcontainer-plugin.git"
+  },
+  "keywords": [
+    "paseo",
+    "paseo-plugin",
+    "devcontainer"
+  ]
 }
