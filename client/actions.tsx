@@ -39,6 +39,11 @@ const ROW_TOOLTIP_DELAY_MS = 700;
 const TOOLTIP_MAX_MS = 4_000;
 let activeTooltip: { current: () => void } | null = null;
 
+// Each leading column (chevron, status dot, project icon) is 16 wide plus a 10 gap; text under
+// the name, and a card's panel, indent by the columns a row shows.
+const LEAD = 26;
+export const CARD_INDENT = 3 * LEAD;
+
 const NEEDS_CONFIRM: ReadonlySet<UiAction> = new Set(["stop", "rebuild"]);
 // A failure stays in the row this long, then the row shows the plain state again.
 const FAILURE_VISIBLE_MS = 10 * 60_000;
@@ -48,8 +53,9 @@ interface ContainerRowProps extends Pick<PluginHostProps, "theme" | "layout"> {
   hostId: string;
   view: ContainerView;
   state: DevcontainersState;
-  // Popover rows name the project; page rows sit under a project header and name the workspace.
-  variant: "popover" | "page";
+  // Popover rows and page cards name the project; page rows sit under a project header and name
+  // the workspace.
+  variant: "popover" | "page" | "card";
   // Receives the workspace holding the new shell terminal.
   onShell(workspaceId: string): void;
   // Pressing the row: the page expands it, the popover shows it on the page. A container hosts
@@ -88,11 +94,15 @@ export function ContainerRow({
   // Hovering the row itself shows its full, untruncated text.
   const rowTooltip = useTooltip(ROW_TOOLTIP_DELAY_MS, setTooltipShown);
   const { container } = view;
-  const page = variant === "page";
+  // Cards are page rows that lead the running section with their project's icon and name.
+  const card = variant === "card";
+  const page = variant !== "popover";
+  const expandable = page && onToggleExpanded !== undefined;
+  const indent = (expandable ? LEAD : 0) + LEAD + (page && !card ? 0 : LEAD);
   const hit = layout.compact ? 32 : 22;
   const styles = useMemo(
     () => ({
-      row: { paddingVertical: page ? 6 : 5, paddingHorizontal: 8, gap: 1, borderRadius: 6 },
+      row: { paddingVertical: card ? 8 : page ? 6 : 5, paddingHorizontal: 8, gap: 1, borderRadius: 6 },
       hovered: { backgroundColor: theme.colors.surface2 },
       line: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, minHeight: layout.compact ? 36 : 26 },
       lead: { width: 16, alignItems: "center" as const, justifyContent: "center" as const },
@@ -105,10 +115,10 @@ export function ContainerRow({
       icons: { flexDirection: "row" as const, alignItems: "center" as const },
       confirm: { color: theme.colors.foreground, fontSize: 12, marginRight: 2 },
       // Under the name: page rows lead with a chevron and a dot, popover rows with a dot and an icon.
-      sub: { color: theme.colors.foregroundMuted, fontSize: 11, paddingLeft: page ? 52 : 24 },
-      log: { color: theme.colors.foregroundMuted, fontSize: 11, fontFamily: "monospace", paddingLeft: page ? 52 : 24 },
+      sub: { color: theme.colors.foregroundMuted, fontSize: 11, paddingLeft: page ? indent : 24 },
+      log: { color: theme.colors.foregroundMuted, fontSize: 11, fontFamily: "monospace", paddingLeft: page ? indent : 24 },
     }),
-    [theme, page, hit, layout.compact],
+    [theme, page, card, indent, hit, layout.compact],
   );
 
   async function run(action: UiAction) {
@@ -155,7 +165,7 @@ export function ContainerRow({
   const popoverWhere = mainCheckout ? null : where;
   // Online and stopped are carried by the dot; other states are worth words.
   const quiet = view.kind === "online" || (view.kind === "stopped" && container.docker === "stopped");
-  const title = page ? where : container.name;
+  const title = page && !card ? where : container.name;
   // An online host is carried by the dot, so only its name is worth words.
   const host = view.host
     ? view.host.status === "online"
@@ -166,16 +176,17 @@ export function ContainerRow({
   // workspace is named otherwise, and whether the sidebar hides it.
   const context = page
     ? [
+        card ? popoverWhere : null,
         quiet ? null : view.label,
         host,
-        container.workspace && container.branch ? container.branch : null,
+        !card && container.workspace && container.branch ? container.branch : null,
         container.hidden ? "hidden" : null,
       ]
         .filter(Boolean)
         .join(" · ") || null
     : [popoverWhere, quiet ? null : view.label].filter(Boolean).join(" · ") || null;
   // The Docker container's name is rarely needed; hovering the row shows it.
-  const fullText = [title, page ? null : where, view.label, host, container.containerName, view.detail]
+  const fullText = [title, page && !card ? null : where, view.label, host, container.containerName, view.detail]
     .filter(Boolean)
     .join(" · ");
 
@@ -204,34 +215,31 @@ export function ContainerRow({
     >
       {rowTooltip.shown ? <TooltipBubble theme={theme} text={fullText} top={layout.compact ? 40 : 30} align="left" /> : null}
       <View style={styles.line}>
-        {page ? (
-          // Page rows keep a chevron's width so names line up whether or not they expand.
+        {expandable ? (
           <View style={styles.lead}>
-            {onToggleExpanded ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityState={{ expanded }}
-                accessibilityLabel={`${expanded ? "Hide" : "Show"} ports of ${title}`}
-                hitSlop={6}
-                onPress={onToggleExpanded}
-              >
-                <Icon
-                  name={expanded ? "ChevronDown" : "ChevronRight"}
-                  size={13}
-                  color={expanded ? theme.colors.foreground : theme.colors.foregroundMuted}
-                />
-              </Pressable>
-            ) : null}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+              accessibilityLabel={`${expanded ? "Collapse" : "Expand"} ${title}`}
+              hitSlop={6}
+              onPress={onToggleExpanded}
+            >
+              <Icon
+                name={expanded ? "ChevronDown" : "ChevronRight"}
+                size={13}
+                color={expanded ? theme.colors.foreground : theme.colors.foregroundMuted}
+              />
+            </Pressable>
           </View>
         ) : null}
         <View style={styles.lead}>{status}</View>
-        {page ? null : container.project ? (
+        {page && !card ? null : container.project ? (
           <ProjectIcon project={container.project} hostId={hostId} />
         ) : (
           <FolderIcon theme={theme} />
         )}
         <View style={styles.text}>
-          <Text style={styles.name} numberOfLines={1}>
+          <Text style={[styles.name, card && { fontWeight: "500" }]} numberOfLines={1}>
             {title}
           </Text>
           {failed ? (

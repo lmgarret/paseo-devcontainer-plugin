@@ -18,7 +18,9 @@ A "Dev containers" row in the sidebar footer shows how many containers run. Its 
 - start the Paseo daemon when it is down, or install Paseo when it is missing;
 - open a shell: a Paseo terminal in the project's workspace running `docker exec` into the container.
 
-Pressing a row opens its workspace, on the container's own Paseo host when it is online. When a paired container stops, a toast suggests starting it. The "All dev containers" page groups every container by project, shows its branch or workspace, container, and paired host, and lets you hide a container from the sidebar. The Command Center lists the actions valid for each container.
+Pressing a row opens the "All dev containers" page with that container shown. When a paired container stops, a toast suggests starting it. The Command Center lists the actions valid for each container.
+
+The "All dev containers" page sums up what runs, what is paired, and how many ports are forwarded. Running containers come first, as cards that open on their details: its project's workspaces on the container's own Paseo host, most urgent first, each opening on that host; its forwarded ports; and its Paseo daemon. Pressing a card's header folds it. Other containers follow as a compact list grouped by project, with their start action, and any container can be hidden from the sidebar.
 
 ## Port forwarding
 
@@ -27,7 +29,7 @@ Like VS Code, the plugin forwards ports from running containers to this machine 
 - each container's Paseo daemon gets its own local port, from 6768 up, saved per repository so it stays the same across restarts and rebuilds;
 - other ports opened in a container, such as a dev server, are detected within a few seconds and forwarded on the same local port, or the next free one. A toast announces them, and they show as pills on the container's row: press one to open it in the browser.
 
-On the "All dev containers" page, a running container's chevron expands its details, like VS Code's Ports view. You see the daemon's address and whether it is paired, then each forwarded port with its local address and the listening process. Pressing a port opens it; hovering shows copy and stop. Stopping a detected port ignores it for that repository, with an undo, and a collapsed "ignored ports" list brings it back. "Forward a port" adds one by hand, even before anything listens on it.
+A running container's card lists its ports like VS Code's Ports view: each forwarded port with its local address and the listening process, then the daemon's address and whether it is paired. Pressing a port opens it; hovering shows copy and stop. Stopping a detected port ignores it for that repository, with an undo, and a collapsed "ignored ports" list brings it back. "Forward a port" adds one by hand, even before anything listens on it.
 
 Ports below 1024, Linux's ephemeral range (32768–60999), and ignored ports in settings are not detected, but can be forwarded by hand. Containers on the host network already share their ports with this machine through Docker, so only their daemon is forwarded, to a port that does not clash with this machine's own daemon. Containers need Node.js on their login PATH, which Paseo already requires.
 

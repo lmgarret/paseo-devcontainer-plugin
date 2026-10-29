@@ -1,6 +1,6 @@
 import { openExternalUrl, type PluginHostProps } from "@getpaseo/plugin/client";
 import { copyText, TextInput, useToast } from "@getpaseo/plugin/client/ui";
-import { type ReactElement, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Container, Forward } from "../shared/contract";
 import { IconButton } from "./actions";
@@ -113,13 +113,30 @@ function StateDot({ theme, forward, size }: { theme: Theme; forward: Forward; si
   );
 }
 
-interface PortsPanelProps extends Pick<PluginHostProps, "theme" | "layout"> {
-  view: ContainerView;
+// An uppercase label with a rule, opening each block of a container's details.
+export function SectionHeading({ theme, text }: { theme: Theme; text: string }) {
+  return (
+    // Lines up with the text below it, not with the daemon box's border.
+    <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, paddingLeft: 8 }}>
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 10, letterSpacing: 0.5, opacity: 0.8 }}>
+        {text.toUpperCase()}
+      </Text>
+      <View style={{ flex: 1, height: 1, backgroundColor: theme.colors.border }} />
+    </View>
+  );
 }
 
-// A running container's expanded details: the daemon's pairing address, then its forwarded
-// ports with open, copy, and stop, a ghost row to forward one by hand, and ignored ports.
-export function PortsPanel({ theme, layout, view }: PortsPanelProps) {
+interface PortsPanelProps extends Pick<PluginHostProps, "theme" | "layout"> {
+  view: ContainerView;
+  // Lines the panel up with the container's name in the row above.
+  indent: number;
+  // Sections shown before the ports, such as the container's workspaces.
+  before?: ReactNode;
+}
+
+// A running container's expanded details: its forwarded ports with open, copy, and stop, a ghost
+// row to forward one by hand, ignored ports, then the daemon's pairing address.
+export function PortsPanel({ theme, layout, view, indent, before }: PortsPanelProps) {
   const { container } = view;
   const toast = useToast();
   const actions = usePortActions();
@@ -138,13 +155,8 @@ export function PortsPanel({ theme, layout, view }: PortsPanelProps) {
   const ignored = actions.ignored(container.repoPath);
   const styles = useMemo(
     () => ({
-      // Lines up with the container name above, after its chevron and status dot.
-      root: { paddingLeft: 52, paddingRight: 8, paddingBottom: 8, gap: 2 },
+      root: { paddingLeft: indent, paddingRight: 8, paddingBottom: 10, gap: 2 },
       section: { marginTop: 6 },
-      // Headings line up with the text below them, not with the daemon box's border.
-      heading: { flexDirection: "row" as const, alignItems: "center" as const, gap: 8, paddingVertical: 4, paddingLeft: 8 },
-      headingText: { color: theme.colors.foregroundMuted, fontSize: 10, letterSpacing: 0.5, opacity: 0.8 },
-      rule: { flex: 1, height: 1, backgroundColor: theme.colors.border },
       daemon: {
         flexDirection: "row" as const,
         alignItems: "center" as const,
@@ -193,7 +205,7 @@ export function PortsPanel({ theme, layout, view }: PortsPanelProps) {
       },
       link: { color: theme.colors.accent, fontSize: 12 },
     }),
-    [theme, layout.compact],
+    [theme, layout.compact, indent],
   );
 
   const attempt = async (work: () => Promise<void>) => {
@@ -255,24 +267,12 @@ export function PortsPanel({ theme, layout, view }: PortsPanelProps) {
     />
   );
 
-  const heading = (text: string) => (
-    <View style={styles.heading}>
-      <Text style={styles.headingText}>{text.toUpperCase()}</Text>
-      <View style={styles.rule} />
-    </View>
-  );
-
   return (
     <View style={styles.root}>
-      {daemon ? (
-        <View style={styles.section}>
-          {heading("Paseo daemon")}
-          <DaemonBlock theme={theme} view={view} forward={daemon} styles={styles} onCopy={copy} iconButton={iconButton} />
-        </View>
-      ) : null}
+      {before}
 
       <View style={styles.section}>
-        {heading("Forwarded ports")}
+        <SectionHeading theme={theme} text="Forwarded ports" />
         {ports.length === 0 ? (
           <Text style={[styles.faint, { paddingHorizontal: 8, paddingVertical: 4 }]}>
             {container.hostNetwork
@@ -380,6 +380,14 @@ export function PortsPanel({ theme, layout, view }: PortsPanelProps) {
           </>
         ) : null}
       </View>
+
+      {/* Pairing is set up once, so the daemon comes last. */}
+      {daemon ? (
+        <View style={styles.section}>
+          <SectionHeading theme={theme} text="Paseo daemon" />
+          <DaemonBlock theme={theme} view={view} forward={daemon} styles={styles} onCopy={copy} iconButton={iconButton} />
+        </View>
+      ) : null}
     </View>
   );
 }
