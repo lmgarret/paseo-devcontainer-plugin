@@ -84,7 +84,7 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           FILES: ${{ steps.changelog.outputs.changelog_files }}
         run: |
-          # The changelog is LLM output: copy it from its file, never through ${{ }}.
+          # The changelog is LLM output: copy it from its file, never through an expression.
           CHANGELOG_FILE=$(jq -r '.default.en // empty' <<< "${FILES:-null}")
           PREVIOUS_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
           {
