@@ -2,6 +2,7 @@ import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin
 import {
   type Action,
   dismissJobRpc,
+  guardRestoreRpc,
   openLogsRpc,
   openShellRpc,
   projectIconRpc,
@@ -14,6 +15,10 @@ import { DevcontainerController } from "./server/controller";
 import { resolveTool } from "./server/process";
 
 const FORWARD_INTERVAL_MS = 3_000;
+// Worktree checks also run without a client, to act on the container's archive reports.
+const GUARD_INTERVAL_MS = 60_000;
+// The container's companion reports its archive repairs in a file; reading it is cheap.
+const REPORT_INTERVAL_MS = 5_000;
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(settingsDefinition);
@@ -74,6 +79,26 @@ export default function contribute(server: PluginServerContext) {
       });
   };
   const forwardTimer = setInterval(syncForwards, FORWARD_INTERVAL_MS);
+  const guardTimer = setInterval(() => {
+    controller.guardTick().catch((error: unknown) => console.error("[devcontainer-host] worktree check failed:", error));
+  }, GUARD_INTERVAL_MS);
+  const reportTimer = setInterval(() => controller.pollGuardReports(), REPORT_INTERVAL_MS);
+
+  // There is no hook before an archive: Paseo has already pruned when this runs.
+  const removeHooks = [
+    server.addHook("workspace.archive.after", async ({ workspace }, context) => {
+      paseo = context.paseo;
+      await controller
+        .afterWorkspaceArchive(workspace)
+        .catch((error: unknown) => console.error("[devcontainer-host] worktree repair after archive failed:", error));
+    }),
+    server.addHook("workspace.create.after", async ({ workspace }, context) => {
+      paseo = context.paseo;
+      await controller
+        .afterWorkspaceCreate(workspace)
+        .catch((error: unknown) => console.error("[devcontainer-host] worktree check after create failed:", error));
+    }),
+  ];
   // Forwarding a port by hand or stopping one answers right away rather than on the next tick.
   const unsubscribe = settings.subscribe(() => {
     controller.invalidate();
@@ -126,6 +151,10 @@ export default function contribute(server: PluginServerContext) {
     controller.dismiss(repoPath);
     return {};
   });
+  server.handle(guardRestoreRpc, ({ repoPath }, context) => {
+    paseo = context.paseo;
+    return controller.restoreWorktrees(repoPath);
+  });
   server.handle(projectIconRpc, async ({ projectId }) => ({ icon: await controller.projectIcon(projectId) }));
   server.handle(openShellRpc, async ({ repoPath }, context) => {
     paseo = context.paseo;
@@ -140,6 +169,9 @@ export default function contribute(server: PluginServerContext) {
   });
   return () => {
     clearInterval(forwardTimer);
+    clearInterval(guardTimer);
+    clearInterval(reportTimer);
+    for (const remove of removeHooks) remove();
     controller.close();
     unsubscribe();
   };

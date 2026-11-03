@@ -103,6 +103,15 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
           {current.persistPaseoHome
             ? input("paseoHomesDir", "Paseo homes folder", "One subfolder per repository.", "~/.paseo/plugin-data/devcontainer-host/homes")
             : null}
+          {current.persistPaseoHome ? (
+            <SettingsSwitch
+              label="Guard shared worktrees"
+              hint="Snapshot the git worktree records this machine and the container share, and restore those an archive or a git worktree prune or repair on the other side breaks. Adds a small plugin to the container's Paseo daemon."
+              value={current.guardWorktrees}
+              disabled={settings.saving}
+              onValueChange={(guardWorktrees) => void save({ guardWorktrees })}
+            />
+          ) : null}
         </SettingsCard>
       </SettingsSection>
 

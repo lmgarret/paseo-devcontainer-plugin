@@ -2,11 +2,20 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type Action, ACTION_LABELS, type Container, type DevcontainerSettings, type Job, type Status } from "../shared/contract";
+import {
+  type Action,
+  ACTION_LABELS,
+  type Container,
+  type DevcontainerSettings,
+  type Job,
+  type Notice,
+  type Status,
+} from "../shared/contract";
 import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
 import { PortForwarder } from "./forwarder";
+import { COMPANION_ID, type GuardTarget, guardTarget, hostRepoPaths, installCompanion, repoLinkScript, WorktreeGuard } from "./guard";
 import { type ProjectIcon, readProjectIcon } from "./icons";
-import { linkHomeScript, pinWorktreesRoot, planPaseoHome } from "./paseo-home";
+import { linkHomeScript, pinWorktreesRoot, planPaseoHome, repoRootOf } from "./paseo-home";
 import { resolveTool, run, toolEnv } from "./process";
 
 const LOG_LINES = 40;
@@ -22,6 +31,13 @@ const DOCKER_VM_AGENT_SOCKET = "/run/host-services/ssh-auth.sock";
 const SSH_AGENT_TARGET = "/tmp/paseo-ssh-agent.sock";
 // Prepended to exec'd scripts so shells and the daemon's agents use the forwarded agent.
 const USE_SSH_AGENT = `if [ -S ${SSH_AGENT_TARGET} ]; then export SSH_AUTH_SOCK=${SSH_AGENT_TARGET}; fi; `;
+const NOTICE_MS = 10 * 60_000;
+
+// What the daemon's workspace hooks report.
+export interface WorkspaceEvent {
+  cwd: string;
+  projectId: string;
+}
 
 interface Tools {
   docker: string | null;
@@ -55,6 +71,8 @@ export class DevcontainerController {
   // Last server ID a daemon reported per repository, for when the container is stopped.
   private readonly knownServerIds = new Map<string, string>();
   private readonly forwarder = new PortForwarder();
+  private readonly guard = new WorktreeGuard();
+  private notices: Notice[] = [];
   private nextJobId = 1;
   private catalog: PaseoCatalog = { projects: [], workspaces: [] };
   private cached: { at: number; status: Promise<Status> } | null = null;
@@ -189,6 +207,78 @@ export class DevcontainerController {
     return project ? readProjectIcon(project) : null;
   }
 
+  // The Restore button: checks now and repairs what can be repaired.
+  async restoreWorktrees(repoPath: string): Promise<{ restored: number; failed: number; remaining: number }> {
+    const { settings, tools, candidates } = await this.discover();
+    const candidate = candidates.find((entry) => entry.repoPath === repoPath);
+    const target = candidate ? guardTarget(settings, candidate.repoPath, candidate.container) : null;
+    if (!candidate || !target) throw new Error("The worktree guard does not cover this container");
+    if (!tools.docker) throw new Error("docker not found. Install Docker Desktop or set the docker path in settings.");
+    const { status, results } = await this.guard.check(target, tools.docker, { trigger: "manual", restore: true });
+    this.cached = null;
+    return {
+      restored: results.filter((result) => !result.error).length,
+      failed: results.filter((result) => result.error).length,
+      remaining: status.worktrees.filter((entry) => entry.state === "broken").length,
+    };
+  }
+
+  // A workspace was archived here: Paseo's `git worktree prune` deletes the records of worktrees
+  // this machine cannot see. Puts them back, but not the archived one.
+  async afterWorkspaceArchive(workspace: WorkspaceEvent): Promise<void> {
+    const { tools, targets } = await this.guardTargetsFor(workspace);
+    if (!tools.docker) return;
+    const docker = tools.docker;
+    await Promise.all(targets.map((target) => this.guard.afterArchive(target, docker, workspace.cwd)));
+    if (targets.length > 0) this.cached = null;
+  }
+
+  // A workspace was created here in a repository its container also uses: worth knowing, and
+  // worth a snapshot of the new worktree's record.
+  async afterWorkspaceCreate(workspace: WorkspaceEvent): Promise<void> {
+    const { tools, targets, candidates } = await this.guardTargetsFor(workspace);
+    for (const target of targets) {
+      const name = candidates.find((entry) => entry.repoPath === target.repoPath)?.name ?? target.repoPath;
+      const message =
+        `${name} also runs in a dev container, which shares its git worktree records. Archiving or ` +
+        "`git worktree prune` and `repair` on either side can break the other side's worktrees; the " +
+        "dev container plugin restores them where it can.";
+      console.warn(`[devcontainer-host] ${message}`);
+      this.notices.push({ id: `${target.repoPath}:${workspace.cwd}:${Date.now()}`, at: Date.now(), repoPath: target.repoPath, message });
+      if (tools.docker) await this.guard.check(target, tools.docker, { trigger: "create" });
+    }
+    if (targets.length > 0) this.cached = null;
+  }
+
+  // Runs without a client: checks stale repositories, which also acts on the container's reports.
+  async guardTick(): Promise<void> {
+    const { settings, tools, candidates } = await this.discover();
+    for (const candidate of candidates) {
+      const target = guardTarget(settings, candidate.repoPath, candidate.container);
+      if (target) this.guard.status(target, tools.docker);
+    }
+  }
+
+  pollGuardReports(): void {
+    this.guard.pollContainerReports();
+  }
+
+  private async guardTargetsFor(workspace: WorkspaceEvent) {
+    const { settings, tools, candidates } = await this.discover();
+    // An archived worktree's folder is gone; its project still names the repository.
+    const root = repoRootOf(workspace.cwd);
+    const targets = candidates.flatMap((candidate) => {
+      const target = guardTarget(settings, candidate.repoPath, candidate.container);
+      if (!target) return [];
+      const matches =
+        candidate.project?.projectId === workspace.projectId ||
+        root === target.config.hostRepo ||
+        root === candidate.repoPath;
+      return matches ? [target] : [];
+    });
+    return { tools, targets, candidates };
+  }
+
   private jobSnapshot(repoPath: string): Job | null {
     const job = this.jobs.get(repoPath);
     return job ? { ...job, log: [...job.log] } : null;
@@ -235,6 +325,7 @@ export class DevcontainerController {
         else if (daemon) this.forwarder.setDaemonRunning(candidate.repoPath, daemon.installed && daemon.running);
         const detected = daemon?.serverId ?? container?.paseoHome.serverId ?? null;
         if (detected) this.knownServerIds.set(candidate.repoPath, detected);
+        const guard = guardTarget(settings, candidate.repoPath, candidate.container);
         return {
           repoPath: candidate.repoPath,
           name: candidate.name,
@@ -264,10 +355,13 @@ export class DevcontainerController {
           daemonRunning: daemon?.installed ? daemon.running : null,
           forwards: [],
           job: null,
+          guard: guard ? this.guard.status(guard, tools.docker) : null,
         };
       }),
     );
-    return { containers, dockerError, tools };
+    const since = Date.now() - NOTICE_MS;
+    this.notices = this.notices.filter((notice) => notice.at >= since);
+    return { containers, dockerError, tools, notices: [...this.notices] };
   }
 
   private exec(docker: string, target: Target, script: string, options: { timeoutMs: number; onLine?: Log }) {
@@ -431,6 +525,7 @@ export class DevcontainerController {
     { optional = false }: { optional?: boolean } = {},
   ): Promise<void> {
     phase("Checking Paseo in the container");
+    const guard = await this.linkRepo(settings, docker, target, repoPath, log);
     let info = await this.daemonInfo(docker, target);
     if (!info) throw new Error("Could not query Paseo in the container");
     if (!info.installed) {
@@ -447,9 +542,11 @@ export class DevcontainerController {
       this.forwarder.setDaemonRunning(repoPath, true);
       log(`Daemon already running (${info.serverId ?? "unknown server"})`);
       this.checkServerId(repoPath, info, log);
+      if (guard) await this.prepareCompanion(docker, target, guard, true, log);
       return;
     }
     await this.linkPaseoHome(settings, docker, target, repoPath, log);
+    if (guard) await this.prepareCompanion(docker, target, guard, false, log);
     phase("Starting Paseo daemon");
     // `paseo daemon start` detaches its supervisor, so it outlives this exec.
     const result = await this.exec(
@@ -502,6 +599,57 @@ export class DevcontainerController {
         return;
       default:
         log(`Could not link the Paseo home: ${lastLine(result.stderr) || `exit ${result.code}`}`);
+    }
+  }
+
+  // On every daemon start, as root: the repository's path on this machine becomes a link to its
+  // folder in the container, so worktrees whose .git a repair here rewrote still open there.
+  // Lost on rebuild, so it is made again each time. Returns the guard's target when it applies.
+  private async linkRepo(
+    settings: DevcontainerSettings,
+    docker: string,
+    target: Target,
+    repoPath: string,
+    log: Log,
+  ): Promise<GuardTarget | null> {
+    if (!settings.guardWorktrees) return null;
+    // Read again: `devcontainer up` may have just created the container.
+    const containers = await listDockerContainers(docker).catch(() => []);
+    const container = containers.find((entry) => entry.id === target.containerId);
+    if (!container?.workspaceFolder) {
+      log("Worktree guard: the repository's folder in the container is unknown; not linking its path.");
+      return null;
+    }
+    const script = repoLinkScript(hostRepoPaths(repoPath), container.workspaceFolder);
+    const result = await run(docker, ["exec", "-u", "root", target.containerId, "sh", "-c", script], {
+      env: toolEnv([docker]),
+      timeoutMs: 20_000,
+    });
+    if (result.code !== 0) log(`Worktree guard: could not link ${repoPath} in the container: ${lastLine(result.stderr)}`);
+    for (const line of result.stderr.split("\n")) {
+      if (line.startsWith("blocked ")) log(`Worktree guard: ${line.slice(8)} exists in the container and is not a link; leaving it.`);
+    }
+    return guardTarget(settings, repoPath, container);
+  }
+
+  // Copies the companion plugin into the container's Paseo home and registers it; a running
+  // daemon reloads it when its files changed.
+  private async prepareCompanion(docker: string, target: Target, guard: GuardTarget, running: boolean, log: Log) {
+    let install: ReturnType<typeof installCompanion>;
+    try {
+      install = installCompanion(guard, running, log);
+    } catch (error) {
+      log(`Worktree guard: could not install the companion plugin: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
+    if (!install) return;
+    if (!install.registered) {
+      log("Worktree guard: the container's companion plugin starts with its Paseo daemon's next start.");
+      return;
+    }
+    if (running && install.changed) {
+      const result = await this.exec(docker, target, `paseo plugin reload ${COMPANION_ID}`, { timeoutMs: 60_000 });
+      if (result.code !== 0) log(`Worktree guard: could not reload the companion plugin: ${lastLine(result.stderr)}`);
     }
   }
 

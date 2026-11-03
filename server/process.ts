@@ -14,6 +14,8 @@ export interface RunOptions {
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
   onLine?: (line: string) => void;
+  // Written to the command's stdin, which is otherwise empty.
+  input?: string;
 }
 
 export class ToolMissingError extends Error {}
@@ -76,7 +78,9 @@ const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 
 export function run(command: string, args: string[], options: RunOptions = {}): Promise<RunResult> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { env: options.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { env: options.env, stdio: ["pipe", "pipe", "pipe"] });
+    child.stdin.on("error", () => {});
+    child.stdin.end(options.input ?? "");
     let stdout = "";
     let stderr = "";
     let pending = "";

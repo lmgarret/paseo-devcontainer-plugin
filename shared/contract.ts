@@ -14,6 +14,9 @@ const generalShape = {
   persistPaseoHome: z.boolean().default(true),
   // Empty: $PASEO_HOME/plugin-data/devcontainer-host/homes. One subfolder per repository.
   paseoHomesDir: z.string().default(""),
+  // Snapshots worktree records shared with containers and restores what a prune or repair on the
+  // other side breaks; installs a companion plugin in container daemons. Needs persistPaseoHome.
+  guardWorktrees: z.boolean().default(true),
   // Empty: resolved from PATH and common install locations.
   dockerPath: z.string().default(""),
   devcontainerPath: z.string().default(""),
@@ -112,6 +115,43 @@ const forwardSchema = z.object({
 });
 export type Forward = z.infer<typeof forwardSchema>;
 
+export const GUARD_DOCS_URL = "https://github.com/lmgarret/paseo-devcontainer-plugin/blob/main/docs/worktrees.md";
+
+const guardWorktreeSchema = z.object({
+  name: z.string(),
+  folder: z.string(),
+  state: z.enum(["safe", "at-risk", "broken"]),
+  problem: z.string().nullable(),
+  // Restore can repair it.
+  fixable: z.boolean(),
+});
+
+const guardRestoreSchema = z.object({
+  at: z.number(),
+  // Where the repair ran: this machine's plugin, or the container's companion plugin.
+  side: z.enum(["host", "container"]),
+  trigger: z.string(),
+  folder: z.string(),
+  error: z.string().nullable(),
+});
+
+// Worktrees of a repository used both here and in its container.
+const guardSchema = z.object({
+  checkedAt: z.number().nullable(),
+  // The container was running and checked too; otherwise only this machine's view.
+  containerChecked: z.boolean(),
+  error: z.string().nullable(),
+  safe: z.number(),
+  // At-risk and broken worktrees only.
+  worktrees: z.array(guardWorktreeSchema),
+  // Repairs of the last day, newest first.
+  restored: z.array(guardRestoreSchema),
+  // The container daemon runs the companion plugin that repairs after its own archives.
+  companion: z.enum(["installed", "pending", "off"]),
+});
+export type Guard = z.infer<typeof guardSchema>;
+export type GuardWorktree = z.infer<typeof guardWorktreeSchema>;
+
 const containerSchema = z.object({
   // Identity: the repository folder, as in the `devcontainer.local_folder` label.
   repoPath: z.string(),
@@ -150,13 +190,20 @@ const containerSchema = z.object({
   daemonRunning: z.boolean().nullable(),
   forwards: z.array(forwardSchema),
   job: jobSchema.nullable(),
+  // Null when the worktree guard does not apply: off, no managed Paseo home, or not a main checkout.
+  guard: guardSchema.nullable(),
 });
 export type Container = z.infer<typeof containerSchema>;
+
+// Something the daemon wants people to know once, such as a workspace created in a shared repository.
+const noticeSchema = z.object({ id: z.string(), at: z.number(), repoPath: z.string(), message: z.string() });
+export type Notice = z.infer<typeof noticeSchema>;
 
 const statusSchema = z.object({
   containers: z.array(containerSchema),
   dockerError: z.string().nullable(),
   tools: z.object({ docker: z.string().nullable(), devcontainer: z.string().nullable() }),
+  notices: z.array(noticeSchema),
 });
 export type Status = z.infer<typeof statusSchema>;
 
@@ -196,4 +243,11 @@ export const projectIconRpc = defineRpc({
   name: "project.icon",
   input: z.object({ projectId: z.string() }),
   output: z.object({ icon: z.object({ data: z.string(), mimeType: z.string() }).nullable() }),
+});
+
+// Checks the repository's worktrees now and repairs what can be repaired.
+export const guardRestoreRpc = defineRpc({
+  name: "guard.restore",
+  input: z.object({ repoPath: z.string() }),
+  output: z.object({ restored: z.number(), failed: z.number(), remaining: z.number() }),
 });
