@@ -1,12 +1,18 @@
 import { defineRpc, defineSettings } from "@getpaseo/plugin";
 import { z } from "zod";
 
-export const DEFAULT_INSTALL_COMMAND = "npm install -g @getpaseo/cli";
+// npm 11 skips dependency install scripts unless allowed; node-pty needs its build for terminals.
+export const DEFAULT_INSTALL_COMMAND = "npm install -g --allow-scripts=esbuild,node-pty,msgpackr-extract @getpaseo/cli";
 
 const generalShape = {
   autoInstallPaseo: z.boolean().default(false),
   // Runs in the container as the remote user with `bash -lc`.
   installCommand: z.string().default(DEFAULT_INSTALL_COMMAND),
+  // Keeps each container's Paseo home in a folder on this machine, mounted at the same path, so
+  // sessions survive rebuilds and git worktrees resolve on both sides.
+  persistPaseoHome: z.boolean().default(true),
+  // Empty: $PASEO_HOME/plugin-data/devcontainer-host/homes. One subfolder per repository.
+  paseoHomesDir: z.string().default(""),
   // Empty: resolved from PATH and common install locations.
   dockerPath: z.string().default(""),
   devcontainerPath: z.string().default(""),

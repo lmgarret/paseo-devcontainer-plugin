@@ -2,6 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Container, DevcontainerSettings } from "../shared/contract";
+import { HOME_MARKER } from "./paseo-home";
 import { run, toolEnv } from "./process";
 
 export interface ProjectRef {
@@ -151,19 +152,30 @@ function paseoHomeOf(raw: InspectResult, remoteUser: string): DockerContainer["p
       return [entry.slice(0, index), entry.slice(index + 1)];
     }),
   );
+  const configured = env.PASEO_HOME as string | undefined;
+  // The plugin's home is mounted at its own path and linked from ~/.paseo, so it is not where
+  // Paseo's default home is mounted.
+  const managed = configured
+    ? undefined
+    : (raw.Mounts ?? []).find(
+        (entry) => entry.Type === "bind" && hostPathOf(entry) === entry.Destination && existsSync(join(entry.Destination, HOME_MARKER)),
+      );
+  if (managed) return { persistent: true, serverId: readServerId(managed.Destination) };
   const home = remoteUser === "root" ? "/root" : `/home/${remoteUser}`;
-  const paseoHome = (env.PASEO_HOME as string | undefined) || `${home}/.paseo`;
+  const paseoHome = configured || `${home}/.paseo`;
   const mount = (raw.Mounts ?? [])
     .filter((candidate) => paseoHome === candidate.Destination || paseoHome.startsWith(`${candidate.Destination}/`))
     .sort((a, b) => b.Destination.length - a.Destination.length)[0];
   if (!mount) return { persistent: false, serverId: null };
   if (mount.Type !== "bind") return { persistent: true, serverId: null };
-  const hostPath = hostPathOf(mount) + paseoHome.slice(mount.Destination.length);
+  return { persistent: true, serverId: readServerId(hostPathOf(mount) + paseoHome.slice(mount.Destination.length)) };
+}
+
+function readServerId(hostPath: string): string | null {
   try {
-    const serverId = readFileSync(join(hostPath, "server-id"), "utf8").trim();
-    return { persistent: true, serverId: serverId || null };
+    return readFileSync(join(hostPath, "server-id"), "utf8").trim() || null;
   } catch {
-    return { persistent: true, serverId: null };
+    return null;
   }
 }
 
