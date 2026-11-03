@@ -5,7 +5,8 @@ import { z } from "zod";
 export const DEFAULT_INSTALL_COMMAND = "npm install -g --allow-scripts=esbuild,node-pty,msgpackr-extract @getpaseo/cli";
 
 const generalShape = {
-  autoInstallPaseo: z.boolean().default(false),
+  // Start and Rebuild install Paseo when the container lacks it.
+  autoInstallPaseo: z.boolean().default(true),
   // Runs in the container as the remote user with `bash -lc`.
   installCommand: z.string().default(DEFAULT_INSTALL_COMMAND),
   // Keeps each container's Paseo home in a folder on this machine, mounted at the same path, so
