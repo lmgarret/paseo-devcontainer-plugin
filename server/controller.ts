@@ -6,6 +6,7 @@ import { type Action, ACTION_LABELS, type Container, type DevcontainerSettings, 
 import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
 import { PortForwarder } from "./forwarder";
 import { type ProjectIcon, readProjectIcon } from "./icons";
+import { linkHomeScript, pinWorktreesRoot, planPaseoHome } from "./paseo-home";
 import { resolveTool, run, toolEnv } from "./process";
 
 const LOG_LINES = 40;
@@ -377,6 +378,7 @@ export class DevcontainerController {
       if (settings.dotfilesTargetPath) args.push("--dotfiles-target-path", settings.dotfilesTargetPath);
       if (settings.dotfilesInstallCommand) args.push("--dotfiles-install-command", settings.dotfilesInstallCommand);
     }
+    for (const mount of planPaseoHome(settings, candidate.repoPath, log)?.mounts ?? []) args.push("--mount", mount);
     const agentSocket = sshAgentSource(settings, log);
     if (agentSocket) {
       args.push("--mount", `type=bind,source=${agentSocket},target=${SSH_AGENT_TARGET}`);
@@ -438,6 +440,7 @@ export class DevcontainerController {
       this.checkServerId(repoPath, info, log);
       return;
     }
+    await this.linkPaseoHome(settings, docker, target, repoPath, log);
     phase("Starting Paseo daemon");
     // `paseo daemon start` detaches its supervisor, so it outlives this exec.
     const result = await this.exec(
@@ -460,6 +463,36 @@ export class DevcontainerController {
       await new Promise<void>((resolve) => setTimeout(() => resolve(), 1_000));
     }
     throw new Error("The Paseo daemon did not report running within 60 s");
+  }
+
+  // Before the daemon starts: ~/.paseo becomes the mounted home, whose worktrees use its shared path.
+  private async linkPaseoHome(
+    settings: DevcontainerSettings,
+    docker: string,
+    target: Target,
+    repoPath: string,
+    log: Log,
+  ): Promise<void> {
+    const plan = planPaseoHome(settings, repoPath, log);
+    if (!plan) return;
+    const result = await this.exec(docker, target, linkHomeScript(plan.home), { timeoutMs: 120_000 });
+    switch (result.code) {
+      case 0:
+        pinWorktreesRoot(plan.home, log);
+        log(`Paseo home: ${plan.home}`);
+        return;
+      case 43:
+        log("This container was created without the persistent Paseo home; rebuild it to keep sessions across rebuilds.");
+        return;
+      case 44:
+        log("The dev container config sets PASEO_HOME; leaving the Paseo home as configured.");
+        return;
+      case 45:
+        log(`Both ~/.paseo and ${plan.home} hold a Paseo daemon's data; keeping ~/.paseo. Merge them by hand to persist it.`);
+        return;
+      default:
+        log(`Could not link the Paseo home: ${lastLine(result.stderr) || `exit ${result.code}`}`);
+    }
   }
 
   private checkServerId(repoPath: string, info: DaemonInfo, log: Log) {

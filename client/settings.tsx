@@ -12,6 +12,7 @@ import { type DevcontainerSettings, settingsDefinition } from "../shared/contrac
 
 type TextField =
   | "installCommand"
+  | "paseoHomesDir"
   | "dockerPath"
   | "devcontainerPath"
   | "dotfilesRepository"
@@ -92,6 +93,16 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
             onValueChange={(autoInstallPaseo) => void save({ autoInstallPaseo })}
           />
           {input("installCommand", "Install command")}
+          <SettingsSwitch
+            label="Keep the Paseo home"
+            hint="Store each container's Paseo home in a folder on this machine, so sessions survive rebuilds and git worktrees work from both sides. Applies to containers created afterwards."
+            value={current.persistPaseoHome}
+            disabled={settings.saving}
+            onValueChange={(persistPaseoHome) => void save({ persistPaseoHome })}
+          />
+          {current.persistPaseoHome
+            ? input("paseoHomesDir", "Paseo homes folder", "One subfolder per repository.", "~/.paseo/plugin-data/devcontainer-host/homes")
+            : null}
         </SettingsCard>
       </SettingsSection>
 
