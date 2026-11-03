@@ -43,7 +43,7 @@ Install the plugin on the daemon of the machine that runs Docker, not on a daemo
 Settings:
 
 - Discovery: scan Paseo projects for dev container configs, and add other repositories.
-- Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is off by default, so nothing is installed until you press Install Paseo or turn it on.
+- Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is on by default. When it is off, Start and Rebuild still succeed and the container offers Install Paseo.
 - Paseo home: keep each container's Paseo home in a folder on this machine, `~/.paseo/plugin-data/devcontainer-host/homes/<repository>` by default. See below. On by default; applies to containers created afterwards.
 - Builds: whether rebuilds open their log in a terminal. On by default.
 - Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
