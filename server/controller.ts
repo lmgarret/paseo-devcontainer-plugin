@@ -230,6 +230,9 @@ export class DevcontainerController {
             ? await this.daemonInfo(tools.docker, { containerId: container.id, remoteUser: container.remoteUser })
             : null;
         if (daemon?.listenPort) this.forwarder.setDaemonPort(candidate.repoPath, daemon.listenPort);
+        // Unknown when the check failed: keep the last state rather than cut a live connection.
+        if (!container?.running) this.forwarder.setDaemonRunning(candidate.repoPath, false);
+        else if (daemon) this.forwarder.setDaemonRunning(candidate.repoPath, daemon.installed && daemon.running);
         const detected = daemon?.serverId ?? container?.paseoHome.serverId ?? null;
         if (detected) this.knownServerIds.set(candidate.repoPath, detected);
         return {
@@ -331,6 +334,7 @@ export class DevcontainerController {
       case "stop": {
         if (!existing) throw new Error("The container does not exist");
         phase("Stopping container");
+        this.forwarder.setDaemonRunning(repoPath, false);
         const result = await run(docker, ["stop", existing.containerId], {
           env: toolEnv([docker]),
           timeoutMs: 120_000,
@@ -440,6 +444,7 @@ export class DevcontainerController {
     }
     if (info?.listenPort) this.forwarder.setDaemonPort(repoPath, info.listenPort);
     if (info?.running) {
+      this.forwarder.setDaemonRunning(repoPath, true);
       log(`Daemon already running (${info.serverId ?? "unknown server"})`);
       this.checkServerId(repoPath, info, log);
       return;
@@ -460,6 +465,7 @@ export class DevcontainerController {
       info = await this.daemonInfo(docker, target);
       if (info?.running) {
         if (info.listenPort) this.forwarder.setDaemonPort(repoPath, info.listenPort);
+        this.forwarder.setDaemonRunning(repoPath, true);
         log(`Daemon running (${info.serverId ?? "unknown server"})`);
         this.checkServerId(repoPath, info, log);
         return;

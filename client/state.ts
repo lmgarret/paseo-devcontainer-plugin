@@ -129,6 +129,8 @@ export function describe(container: Container, hosts: readonly PluginHostSummary
   if (container.paseoInstalled === false) {
     return view("warning", "No Paseo", ["install-paseo", ...RUNNING_ACTIONS]);
   }
+  // The container's own report wins: the app may reach another daemon at the forwarded address.
+  if (container.daemonRunning === false) return view("warning", "Paseo stopped", ["start-daemon", ...RUNNING_ACTIONS]);
   if (host?.status === "online") return view("online", "Online", RUNNING_ACTIONS);
   // Right after a start the daemon boots and the app reconnects on its own: not a problem yet.
   if (host && justStarted(container)) {

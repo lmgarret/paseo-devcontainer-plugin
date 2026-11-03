@@ -34,7 +34,7 @@ Like VS Code, the plugin forwards ports from running containers to this machine 
 
 A running container's card lists its ports like VS Code's Ports view: each forwarded port with its local address and the listening process, then the daemon's address and whether it is paired. Pressing a port opens it; hovering shows copy and stop. Stopping a detected port ignores it for that repository, with an undo, and a collapsed "ignored ports" list brings it back. "Forward a port" adds one by hand, even before anything listens on it.
 
-Ports below 1024, Linux's ephemeral range (32768–60999), and ignored ports in settings are not detected, but can be forwarded by hand. Containers on the host network already share their ports with this machine through Docker, so only their daemon is forwarded, to a port that does not clash with this machine's own daemon. Containers need Node.js on their login PATH, which Paseo already requires.
+Ports below 1024, Linux's ephemeral range (32768–60999), and ignored ports in settings are not detected, but can be forwarded by hand. Containers on the host network already share their ports with this machine through Docker, so only their daemon is forwarded, to a port that does not clash with this machine's own daemon. A daemon's port carries connections only while the container reports its daemon running: in a host-network container the daemon's address is shared with this machine and with other host-network containers, so another daemon could answer there. Containers need Node.js on their login PATH, which Paseo already requires.
 
 ## Setup
 
