@@ -81,6 +81,8 @@ class Tunnel {
   // Forwarded on request rather than detected.
   manual = false;
   listening = false;
+  // Connections are refused while false: the port stays reserved, but reaches nothing.
+  accepting = true;
 
   constructor(public route: Route) {}
 
@@ -104,12 +106,21 @@ class Tunnel {
   close(): void {
     for (const server of this.servers) server.close();
     this.servers.length = 0;
-    for (const child of this.children) child.kill();
-    this.children.clear();
+    this.drop();
     this.hostPort = null;
   }
 
+  // Ends the open connections; their sockets close with the exec.
+  drop(): void {
+    for (const child of this.children) child.kill();
+    this.children.clear();
+  }
+
   private readonly accept = (socket: Socket) => {
+    if (!this.accepting) {
+      socket.destroy();
+      return;
+    }
     const { docker, env, containerId, remoteUser, node, host, port } = this.route;
     const child = spawn(docker, ["exec", "-i", "-u", remoteUser, containerId, node, "-e", BRIDGE, host, String(port)], {
       env,
@@ -130,6 +141,10 @@ export class PortForwarder {
   private readonly repos = new Map<string, RepoForwards>();
   // In-container daemon port per repository, as the daemon reports it.
   private readonly daemonPorts = new Map<string, number>();
+  // Whether the container reports its own daemon running. The daemon forward only carries
+  // connections then: in a host-network container, the daemon's address is this machine's
+  // loopback, where this machine's own daemon answers whenever the container's is down.
+  private readonly daemonRunning = new Map<string, boolean>();
   private readonly nodePaths = new Map<string, string>();
   // Process command line per container and socket inode; looked up once per new listener.
   private readonly processes = new Map<string, Map<string, string | null>>();
@@ -141,6 +156,18 @@ export class PortForwarder {
 
   setDaemonPort(repoPath: string, port: number): void {
     this.daemonPorts.set(repoPath, port);
+  }
+
+  setDaemonRunning(repoPath: string, running: boolean): void {
+    this.daemonRunning.set(repoPath, running);
+    const tunnel = this.repos.get(repoPath)?.daemon;
+    if (tunnel) this.gateDaemon(repoPath, tunnel);
+  }
+
+  private gateDaemon(repoPath: string, tunnel: Tunnel): void {
+    const accepting = this.daemonRunning.get(repoPath) === true;
+    if (tunnel.accepting && !accepting) tunnel.drop();
+    tunnel.accepting = accepting;
   }
 
   forwards(repoPath: string): Forward[] {
@@ -236,7 +263,8 @@ export class PortForwarder {
       const route = { ...base, host: daemonListener?.host ?? "127.0.0.1", port: daemonPort };
       repo.daemon ??= new Tunnel(route);
       repo.daemon.route = route;
-      repo.daemon.listening = daemonListener !== null;
+      this.gateDaemon(repoPath, repo.daemon);
+      repo.daemon.listening = daemonListener !== null && repo.daemon.accepting;
       if (repo.daemon.hostPort === null) await this.bindDaemon(repoPath, repo.daemon, settings.daemonPortStart);
     } else if (repo.daemon) {
       repo.daemon.close();
