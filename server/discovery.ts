@@ -40,7 +40,8 @@ export interface DockerContainer {
   remoteUser: string;
   // Where the repository is mounted inside the container.
   workspaceFolder: string | null;
-  paseoHome: { persistent: boolean; serverId: string | null };
+  // `home`: the plugin's managed Paseo home, mounted at its own path; null for any other home.
+  paseoHome: { persistent: boolean; serverId: string | null; home: string | null };
   hostNetwork: boolean;
 }
 
@@ -160,15 +161,19 @@ function paseoHomeOf(raw: InspectResult, remoteUser: string): DockerContainer["p
     : (raw.Mounts ?? []).find(
         (entry) => entry.Type === "bind" && hostPathOf(entry) === entry.Destination && existsSync(join(entry.Destination, HOME_MARKER)),
       );
-  if (managed) return { persistent: true, serverId: readServerId(managed.Destination) };
+  if (managed) return { persistent: true, serverId: readServerId(managed.Destination), home: managed.Destination };
   const home = remoteUser === "root" ? "/root" : `/home/${remoteUser}`;
   const paseoHome = configured || `${home}/.paseo`;
   const mount = (raw.Mounts ?? [])
     .filter((candidate) => paseoHome === candidate.Destination || paseoHome.startsWith(`${candidate.Destination}/`))
     .sort((a, b) => b.Destination.length - a.Destination.length)[0];
-  if (!mount) return { persistent: false, serverId: null };
-  if (mount.Type !== "bind") return { persistent: true, serverId: null };
-  return { persistent: true, serverId: readServerId(hostPathOf(mount) + paseoHome.slice(mount.Destination.length)) };
+  if (!mount) return { persistent: false, serverId: null, home: null };
+  if (mount.Type !== "bind") return { persistent: true, serverId: null, home: null };
+  return {
+    persistent: true,
+    serverId: readServerId(hostPathOf(mount) + paseoHome.slice(mount.Destination.length)),
+    home: null,
+  };
 }
 
 function readServerId(hostPath: string): string | null {

@@ -29,6 +29,10 @@ const POPOVER_LIMIT = 5;
 // Module scope so a remounted sidebar does not repeat toasts.
 const lastKinds = new Map<string, ContainerView["kind"]>();
 const notifiedJobs = new Set<string>();
+const notifiedNotices = new Set<string>();
+// The shared-worktrees warning shows once per repository while the app runs, not on every workspace.
+const warnedRepos = new Set<string>();
+const notifiedRepairs = new Set<string>();
 const loadedAt = Date.now();
 // Detected forwards already seen; ports open when the app loads are not announced.
 const knownForwards = new Set<string>();
@@ -39,9 +43,10 @@ function useToasts(state: DevcontainersState) {
   const signature = state.views
     .map((view) => {
       const ports = appForwards(view.container).map((forward) => `${forward.containerPort}>${forward.hostPort}`);
-      return `${view.container.repoPath}:${view.kind}:${view.host?.status}:${view.container.job?.state}:${ports.join(",")}`;
+      const repairs = view.container.guard?.restored.length ?? 0;
+      return `${view.container.repoPath}:${view.kind}:${view.host?.status}:${view.container.job?.state}:${ports.join(",")}:${repairs}`;
     })
-    .join("|");
+    .join("|") + `|${(state.status?.notices ?? []).map((notice) => notice.id).join(",")}`;
 
   useEffect(() => {
     const unreachable: string[] = [];
@@ -65,9 +70,35 @@ function useToasts(state: DevcontainersState) {
     });
 
     const forwarded = state.status ? newForwards(state.views) : [];
+    const notices = (state.status?.notices ?? []).filter((notice) => {
+      if (notice.at < loadedAt || notifiedNotices.has(notice.id)) return false;
+      notifiedNotices.add(notice.id);
+      if (warnedRepos.has(notice.repoPath)) return false;
+      warnedRepos.add(notice.repoPath);
+      return true;
+    });
+    // Repairs the daemon made on its own, such as after an archive; Restore has its own toast.
+    const repaired = state.views.flatMap((view) => {
+      const fresh = (view.container.guard?.restored ?? []).filter((entry) => {
+        const id = `${view.container.repoPath}:${entry.at}:${entry.folder}`;
+        if (entry.at < loadedAt || entry.trigger === "manual" || notifiedRepairs.has(id)) return false;
+        notifiedRepairs.add(id);
+        return true;
+      });
+      const ok = fresh.filter((entry) => !entry.error).length;
+      const failed = fresh.length - ok;
+      if (fresh.length === 0) return [];
+      const parts = [ok > 0 ? `restored ${ok}` : null, failed > 0 ? `could not restore ${failed}` : null].filter(Boolean);
+      return [{ failed: failed > 0, message: `${view.container.name}: ${parts.join(", ")} git worktree ${fresh.length === 1 ? "record" : "records"} after an archive` }];
+    });
 
     // A newer toast replaces the visible one, so show the most important message last.
     for (const message of forwarded) toast.show(message, { variant: "info", durationMs: 6_000 });
+    for (const notice of notices) toast.show(notice.message, { variant: "warning", durationMs: 10_000 });
+    for (const { failed, message } of repaired) {
+      if (failed) toast.error(message);
+      else toast.show(message, { variant: "success", durationMs: 6_000 });
+    }
     if (unreachable.length > 0) {
       toast.show(`${unreachable.join(", ")}: container host unreachable. Start devcontainer?`, {
         variant: "warning",

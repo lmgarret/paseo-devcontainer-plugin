@@ -2,7 +2,7 @@ import { type PluginScreenParams, type PluginScreenProps, useSettings } from "@g
 import { Icon, Loading, ScrollView, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
-import { CARD_INDENT, ContainerRow } from "./actions";
+import { CARD_INDENT, ContainerRow, LEAD } from "./actions";
 import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
 import { FolderIcon, ProjectIcon } from "./project-icon";
 import { settingsDefinition } from "../shared/contract";
@@ -18,6 +18,7 @@ import {
   type WorkspaceTarget,
 } from "./state";
 import { ContainerWorkspaces } from "./workspaces";
+import { WorktreesPanel } from "./worktrees";
 
 // Popovers and commands cannot navigate; they open this screen with the target in its params.
 export function workspaceParams(target: WorkspaceTarget): PluginScreenParams {
@@ -293,7 +294,12 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
                       layout={layout}
                       view={view}
                       indent={CARD_INDENT}
-                      before={<ContainerWorkspaces theme={theme} layout={layout} view={view} onOpen={openWorkspace} />}
+                      before={
+                        <>
+                          <ContainerWorkspaces theme={theme} layout={layout} view={view} onOpen={openWorkspace} />
+                          <WorktreesPanel theme={theme} layout={layout} view={view} />
+                        </>
+                      }
                     />
                   ) : null}
                 </View>
@@ -353,6 +359,10 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
                         style={[styles.indented, view.container.hidden && { opacity: 0.55 }]}
                       >
                         {row(view, "page")}
+                        {/* Under the row's name, past its status dot. */}
+                        <View style={{ paddingLeft: LEAD }}>
+                          <WorktreesPanel theme={theme} layout={layout} view={view} compact />
+                        </View>
                       </View>
                     ))}
                   </View>

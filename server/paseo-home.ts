@@ -27,9 +27,7 @@ type Log = (line: string) => void;
 export function planPaseoHome(settings: DevcontainerSettings, repoPath: string, log: Log): PaseoHomePlan | null {
   if (!settings.persistPaseoHome) return null;
   try {
-    const root = settings.paseoHomesDir
-      ? expandTilde(settings.paseoHomesDir)
-      : join(hostPaseoHome(), "plugin-data", "devcontainer-host", "homes");
+    const root = homesRoot(settings);
     mkdirSync(root, { recursive: true });
     const home = claimHome(realpathSync(root), repoPath);
     const hostWorktrees = hostWorktreesFor(repoPath);
@@ -49,6 +47,18 @@ export function planPaseoHome(settings: DevcontainerSettings, repoPath: string, 
     log(`Could not prepare a persistent Paseo home: ${error instanceof Error ? error.message : String(error)}`);
     return null;
   }
+}
+
+// Where this plugin keeps containers' Paseo homes.
+export function homesRoot(settings: DevcontainerSettings): string {
+  return settings.paseoHomesDir
+    ? expandTilde(settings.paseoHomesDir)
+    : join(hostPaseoHome(), "plugin-data", "devcontainer-host", "homes");
+}
+
+// The repository a managed home belongs to, from its marker.
+export function homeOwner(home: string): string | null {
+  return readMarker(home) || null;
 }
 
 // One folder per repository, named after it; a clash with another repository adds a hash.
@@ -94,7 +104,7 @@ export function worktreesRootOf(paseoHome: string): string {
 }
 
 // The main checkout of the repository, also for a linked worktree.
-function repoRootOf(repoPath: string): string | null {
+export function repoRootOf(repoPath: string): string | null {
   try {
     const dotGit = join(repoPath, ".git");
     let commonDir = dotGit;
@@ -128,10 +138,12 @@ function shortHash(value: string): string {
 
 interface PaseoConfig {
   worktrees?: { root?: string };
+  pluginsEnabled?: boolean;
+  plugins?: Record<string, { source?: string; path?: string; enabled?: boolean }>;
   [key: string]: unknown;
 }
 
-function readConfig(paseoHome: string): PaseoConfig | null {
+export function readConfig(paseoHome: string): PaseoConfig | null {
   try {
     return JSON.parse(readFileSync(join(paseoHome, "config.json"), "utf8")) as PaseoConfig;
   } catch {
@@ -178,12 +190,18 @@ export function linkHomeScript(home: string): string {
   ].join("\n");
 }
 
-function shellQuote(value: string): string {
+export function writeConfig(home: string, config: PaseoConfig): void {
+  const file = join(home, "config.json");
+  writeFileSync(`${file}.tmp`, `${JSON.stringify(config, null, 2)}\n`);
+  renameSync(`${file}.tmp`, file);
+}
+
+export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 // This machine's Paseo home, where the plugin's daemon runs.
-function hostPaseoHome(): string {
+export function hostPaseoHome(): string {
   return expandTilde(process.env.PASEO_HOME || "~/.paseo");
 }
 

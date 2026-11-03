@@ -8,7 +8,7 @@ See [OVERVIEW.md](OVERVIEW.md) for what it does and how it behaves.
 
 ## Requirements
 
-- Paseo 0.13.1 or later, with plugins enabled (Settings → Plugins).
+- Paseo 0.15.0 or later, with plugins enabled (Settings → Plugins).
 - Docker and the [`devcontainer` CLI](https://github.com/devcontainers/cli) on the machine running the Paseo daemon.
 
 ## Install
@@ -29,7 +29,7 @@ paseo plugin reload devcontainer-host   # after each change
 paseo plugin logs devcontainer-host
 ```
 
-Layout: `index.client.tsx` and `client/` run in the app, `index.server.ts` and `server/` run in the daemon, and `shared/` holds the RPC contracts used by both.
+Layout: `index.client.tsx` and `client/` run in the app, `index.server.ts` and `server/` run in the daemon, and `shared/` holds the RPC contracts used by both. `server/companion.ts` and `server/worktree-guard.ts` are also copied into each container's Paseo home as the `devcontainer-guard` plugin, so they use Node built-ins and type imports only.
 
 ## Releasing
 

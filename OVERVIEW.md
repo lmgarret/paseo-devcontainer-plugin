@@ -45,6 +45,7 @@ Settings:
 - Discovery: scan Paseo projects for dev container configs, and add other repositories.
 - Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is on by default. When it is off, Start and Rebuild still succeed and the container offers Install Paseo.
 - Paseo home: keep each container's Paseo home in a folder on this machine, `~/.paseo/plugin-data/devcontainer-host/homes/<repository>` by default. See below. On by default; applies to containers created afterwards.
+- Guard shared worktrees: check and repair the git worktrees this machine and a container share. See below. On by default.
 - Builds: whether rebuilds open their log in a terminal. On by default.
 - Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
 - Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.
@@ -58,7 +59,17 @@ When a container is created, the plugin mounts its Paseo home folder at the same
 - the daemon keeps its server ID, pairing, and agents across rebuilds;
 - every Paseo worktree has the same path on this machine and in the container. Git records each worktree's absolute path in the repository's shared `.git`, and `git worktree prune`, which Paseo runs whenever it archives a worktree, deletes the record of any worktree it cannot see. With different paths on each side, archiving on one side broke the other side's worktrees.
 
-The plugin leaves the home alone when the dev container config sets `PASEO_HOME`, and keeps `~/.paseo` when it already holds another daemon's data. Worktrees created outside these folders, by hand or by other tools, can still be pruned by the other side.
+The plugin leaves the home alone when the dev container config sets `PASEO_HOME`, and keeps `~/.paseo` when it already holds another daemon's data.
+
+The repository itself still has a different path on each side, and worktrees created outside these folders, by hand or by other tools, can still be pruned by the other side. So the plugin also guards the worktrees both sides share:
+
+- in the container, it links the repository's path on this machine to its folder, so a `git worktree repair` here does not break the container's worktrees;
+- it snapshots every worktree's git record, and shows on the container's row how many are at risk, broken, or were restored, with each worktree's problem on its card;
+- after an archive on this machine it puts back the records Paseo's prune deleted for other worktrees, and a small companion plugin it installs in the container's Paseo daemon does the same after archives there. The archived worktree stays gone;
+- the card's Restore button repairs what a `git worktree prune` or `repair` run by hand broke;
+- creating a workspace on this machine for a repository that also runs in a container shows a warning once.
+
+[Worktrees shared with a dev container](https://github.com/lmgarret/paseo-devcontainer-plugin/blob/main/docs/worktrees.md) explains what can go wrong, what the plugin cannot catch, and how to recover by hand.
 
 ## Limits
 

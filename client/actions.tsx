@@ -10,8 +10,10 @@ import {
   type ContainerView,
   type DevcontainersState,
   FAILURE_VISIBLE_MS,
+  guardBadge,
   kindColor,
   STATUS_KEY,
+  toneColor,
   type UiAction,
   useDismissJob,
   useOpenLogs,
@@ -52,7 +54,7 @@ let activeTooltip: { current: () => void } | null = null;
 
 // Each leading column (chevron, status dot, project icon) is 16 wide plus a 10 gap; text under
 // the name, and a card's panel, indent by the columns a row shows.
-const LEAD = 26;
+export const LEAD = 26;
 export const CARD_INDENT = 3 * LEAD;
 
 const NEEDS_CONFIRM: ReadonlySet<UiAction> = new Set(["stop", "rebuild", "rebuild-no-cache"]);
@@ -273,6 +275,7 @@ export function ContainerRow({
             </Text>
           ) : null}
         </View>
+        {confirming ? null : <GuardPill theme={theme} view={view} popover={!page} />}
         {confirming ? null : <PortPills theme={theme} container={container} max={page ? 3 : 2} />}
         {confirming ? (
           <View style={styles.icons}>
@@ -334,6 +337,23 @@ export function ContainerRow({
         </>
       ) : null}
     </Pressable>
+  );
+}
+
+// Worktrees broken, at risk, or repaired; the popover only shows broken ones.
+function GuardPill({ theme, view, popover }: { theme: PluginHostProps["theme"]; view: ContainerView; popover: boolean }) {
+  const badge = guardBadge(view.container.guard);
+  if (!badge || (popover && badge.tone !== "danger")) return null;
+  const color = toneColor(badge.tone, theme);
+  return (
+    <View
+      accessibilityLabel={`Worktrees: ${badge.text}`}
+      style={{ paddingHorizontal: 7, paddingVertical: 1, borderRadius: 10, borderWidth: 1, borderColor: color, flexShrink: 0 }}
+    >
+      <Text style={{ color, fontSize: 11 }} numberOfLines={1}>
+        {`worktrees ${badge.text}`}
+      </Text>
+    </View>
   );
 }
 

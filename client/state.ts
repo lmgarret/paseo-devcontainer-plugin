@@ -8,6 +8,8 @@ import {
   type Container,
   dismissJobRpc,
   type Forward,
+  type Guard,
+  guardRestoreRpc,
   openLogsRpc,
   openShellRpc,
   runActionRpc,
@@ -296,4 +298,37 @@ export function groupByProject(views: ContainerView[]): ProjectGroup[] {
     groups.set(key, group);
   }
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+export function useRestoreWorktrees() {
+  return useRpc(guardRestoreRpc);
+}
+
+export type GuardTone = "danger" | "warning" | "success";
+
+// The row's worktree badge: broken, at risk, and repaired in the last day, coloured by the most
+// urgent.
+export function guardBadge(guard: Guard | null): { text: string; tone: GuardTone } | null {
+  if (!guard) return null;
+  const broken = guard.worktrees.filter((entry) => entry.state === "broken").length;
+  const atRisk = guard.worktrees.filter((entry) => entry.state === "at-risk").length;
+  const restored = guard.restored.filter((entry) => !entry.error).length;
+  const parts = [
+    broken > 0 ? `${broken} broken` : null,
+    atRisk > 0 ? `${atRisk} at risk` : null,
+    restored > 0 ? `${restored} restored` : null,
+  ].filter(Boolean);
+  if (parts.length === 0) return null;
+  return { text: parts.join(" · "), tone: broken > 0 ? "danger" : atRisk > 0 ? "warning" : "success" };
+}
+
+export function toneColor(tone: GuardTone, theme: PluginTheme): string {
+  switch (tone) {
+    case "danger":
+      return theme.colors.statusDanger;
+    case "warning":
+      return theme.colors.statusWarning;
+    case "success":
+      return theme.colors.statusSuccess;
+  }
 }
