@@ -344,7 +344,8 @@ export class DevcontainerController {
       case "rebuild-no-cache": {
         const rebuild = job.action === "start" ? null : { noCache: job.action === "rebuild-no-cache" };
         const target = await this.up(settings, tools, candidate, rebuild, phase, log);
-        await this.ensureDaemon(settings, docker, target, repoPath, phase, log);
+        // The container is up either way; a missing Paseo only leaves Install Paseo to press.
+        await this.ensureDaemon(settings, docker, target, repoPath, phase, log, { optional: true });
         return;
       }
       case "start-daemon":
@@ -423,13 +424,16 @@ export class DevcontainerController {
     repoPath: string,
     phase: (text: string) => void,
     log: Log,
+    { optional = false }: { optional?: boolean } = {},
   ): Promise<void> {
     phase("Checking Paseo in the container");
     let info = await this.daemonInfo(docker, target);
     if (!info) throw new Error("Could not query Paseo in the container");
     if (!info.installed) {
       if (!settings.autoInstallPaseo) {
-        throw new Error("Paseo is not installed in the container. Use Install Paseo.");
+        if (!optional) throw new Error("Paseo is not installed in the container. Use Install Paseo.");
+        log("Paseo is not installed in the container; use Install Paseo, or turn on Install automatically.");
+        return;
       }
       await this.installPaseo(settings, docker, target, phase, log);
       info = await this.daemonInfo(docker, target);
