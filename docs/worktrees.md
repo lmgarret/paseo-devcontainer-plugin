@@ -1,66 +1,130 @@
 # Worktrees shared with a dev container
 
-When a repository is used by Paseo on your machine and by Paseo inside its dev container, both sides share one `.git`. Some git commands run on one side can break the other side's worktrees. This page explains why, what the plugin does about it, what it cannot catch, and how to recover by hand.
+> [!NOTE]
+> This applies when Paseo uses a repository on this machine **and** in its dev container. Both sides then share one `.git`.
+
+## At a glance
+
+- **What breaks:** archiving a workspace, `git worktree prune`, or `git worktree repair` on one side can break the other side's worktrees.
+- **What the plugin does:** it snapshots worktree records, repairs after archives on either side, and flags anything else on the container's row.
+- **What you do:** when a row shows **broken**, open its card and press **Restore**.
 
 ## Why it breaks
 
-Git keeps one record per worktree in `.git/worktrees/<name>`, and stores absolute paths:
+Git links each worktree to a record in `.git/worktrees/<name>` by absolute path, and the repository has a different path on each side.
 
-- each worktree's `.git` file points at its record: `gitdir: <repository>/.git/worktrees/<name>`;
-- each record's `gitdir` file points back at the worktree's `.git` file.
+```mermaid
+flowchart LR
+  WT["feature-x/.git<br/>gitdir: ~/git/app/.git/worktrees/feature-x"]
+  WT --> HOST["On this machine<br/>~/git/app exists ✓"]
+  WT --> BOX["In the container<br/>the repository is /workspaces/app ✗"]
+  BOX -.->|fixed by| LINK["The plugin's link in the container<br/>~/git/app → /workspaces/app"]
+```
 
-The repository has a different path on each side, for example `~/git/app` on your machine and `/workspaces/app` in the container. Two commands then do damage:
+| On one side | What it does to the other side | What the plugin does |
+| --- | --- | --- |
+| Archive a workspace | Paseo runs `git worktree prune`, which deletes the records of worktrees this side cannot see | Restores them on its own |
+| `git worktree prune` | Same | Flags them **broken**: press Restore |
+| `git worktree repair` | Rewrites every worktree's `.git` file to this side's repository path | On this machine: covered by the link. In the container: flagged **broken**, press Restore |
 
-- `git worktree prune` deletes the record of every worktree whose folder it cannot see. Paseo runs it each time it archives a workspace, on whichever side archives.
-- `git worktree repair` rewrites every worktree's `.git` file to the repository path of the side that runs it. The other side can no longer open those worktrees: git reports "not a git repository" or "gitfile does not point to a valid repository".
+## Archive on this machine
 
-## What the plugin does
+```mermaid
+sequenceDiagram
+  participant P as Paseo on this machine
+  participant G as Shared .git
+  participant D as Dev container plugin
+  P->>D: workspace archived
+  P->>G: remove the worktree, then git worktree prune
+  Note over G: records of worktrees this machine cannot see are deleted
+  D->>D: wait until the worktree's folder is gone
+  D->>G: put deleted records back from the snapshot
+  D->>D: rebuild their index
+  Note over D: checks keep repairing for 5 minutes
+```
 
-These protections are on by default. You can turn them off with "Guard shared worktrees" in the plugin's settings, which needs "Keep the Paseo home".
+The archived worktree stays gone: a record only comes back when its folder still exists and that folder's `.git` file names it.
 
-- **Same paths.** The container's Paseo home and this machine's Paseo worktrees for the repository are mounted at their own paths. Paseo worktrees then have the same path on both sides, so a prune on either side keeps their records.
-- **Your repository's path in the container.** Each time the plugin starts the container's Paseo daemon, and on each check of a running container, it links the repository's path on this machine to its folder in the container, as root. A `.git` file that a repair on this machine rewrote still opens in the container. The link is lost when the container is rebuilt and made again on the next start or check.
-- **Snapshots.** The plugin copies each working record into `<container home>/devcontainer-guard/snapshots`, which both sides see at the same path. It keeps a snapshot until both sides confirm the worktree's folder is gone.
-- **Checks.** Each worktree is shown as one of:
-  - safe;
-  - at risk: only one side can see its folder, so a prune on the other side deletes its record. This is often a worktree created by hand outside the shared folders;
-  - broken: its record was deleted, taken by another worktree with the same name, or its `.git` file points to a path a side cannot open.
-  The dev container's row shows the count, and its card lists each worktree with what is wrong. Checks run every 15 seconds while the Paseo app is open, and every minute otherwise.
-- **Repairs after archives.** After an archive on this machine, the plugin waits for Paseo to remove the worktree and prune, then puts back any other worktree's record from its snapshot. A small companion plugin, `devcontainer-guard`, does the same inside the container after the container's own archives. Records it cannot reach there are reported to this machine, which repairs them within seconds. The archived worktree stays gone: a record is only put back when the worktree's folder still exists and its `.git` file names that record.
-- **Restore.** The card's Restore button repairs every broken worktree it can, on either side.
-- **A warning.** When you create a workspace on this machine for a repository that also runs in a dev container, the plugin logs a warning and shows it once.
+## Archive in the container
 
-A repair writes the record's `HEAD`, `gitdir`, `commondir`, and `locked` and `config.worktree` when they exist, then rebuilds the index from `HEAD` with a mixed `git reset`. Files in the worktree are not touched. Changes that were staged show as unstaged afterwards, and a merge or rebase in progress is lost. A worktree on a detached `HEAD` returns to the commit of its last snapshot.
+```mermaid
+sequenceDiagram
+  participant P as Paseo in the container
+  participant C as Companion plugin
+  participant F as Status file
+  participant H as Plugin on this machine
+  P->>C: workspace archived
+  P->>P: remove the worktree, then git worktree prune
+  C->>C: restore records of worktrees the container can reach
+  C->>F: list the records it could not reach
+  H->>F: read it, every 5 seconds
+  H->>H: restore the rest
+```
 
-## What it cannot catch
+## What the row shows
 
-- A `git worktree prune` or `repair` run by hand, by an agent, or by a tool such as GitKraken, on either side. The next check shows the damage. Press Restore to repair it: only archives are repaired on their own.
-- Damage while this machine's Paseo daemon is not running. The next check after it starts shows it.
-- Worktrees whose record was deleted before the plugin took its first snapshot. Recover those by hand, below.
-- Containers without the plugin's Paseo home, such as ones created before it was turned on, or whose config sets `PASEO_HOME`. Rebuild them from Paseo.
+```mermaid
+flowchart TD
+  A{"Is the record missing,<br/>or taken by another worktree?"} -->|yes| B["broken"]
+  A -->|no| C{"Does its .git file open<br/>on every side that sees it?"}
+  C -->|"no, after a repair"| B
+  C -->|yes| D{"Do both sides<br/>see its folder?"}
+  D -->|no| R["at risk"]
+  D -->|yes| S["safe"]
+```
 
-The companion plugin needs Paseo 0.15 or later in the container. The plugin copies it into the container's Paseo home and registers it in that daemon's config before starting the daemon. This sets `pluginsEnabled`, which also starts any other plugin configured there, and skips Paseo's trust prompt, since it is the plugin's own code. Updates reach a running daemon with a plugin reload, and a first install takes effect at the daemon's next start. If you disable it with `paseo plugin disable devcontainer-guard` in the container, it stays disabled.
+| Status | Meaning | What to do |
+| --- | --- | --- |
+| safe | Both sides see it, and git opens it | Nothing |
+| at risk | Only one side sees its folder, so a prune on the other side deletes its record. Often a worktree made by hand outside Paseo's folders | Nothing: it is restored after archives |
+| broken | Its record is gone or taken, or its `.git` file points where a side cannot open it | Press **Restore** |
+| restored | Repaired in the last day | Nothing |
 
-With Docker Desktop, the container can take a while to see a file this machine just wrote in the shared `.git`. That is why repairs run inside the container whenever it can reach the worktree. If git in the container fails right after a change on this machine, wait a few seconds and try again.
+> [!NOTE]
+> **Restore never touches your files.** It puts the record back and rebuilds the index from `HEAD`. Staged changes show as unstaged afterwards, a merge or rebase in progress is lost, and a detached `HEAD` returns to its last snapshot.
+
+> [!WARNING]
+> **Repaired only when you press Restore:**
+> - `git worktree prune` or `repair` run by hand, by an agent, or by a tool such as GitKraken, on either side
+> - damage while this machine's Paseo daemon is stopped
+>
+> **Not covered:**
+> - records deleted before the plugin's first snapshot: recover them by hand, below
+> - containers without the plugin's Paseo home, such as ones created before it, or whose config sets `PASEO_HOME`: rebuild them from Paseo
+
+## Under the hood
+
+| Piece | What it does | When |
+| --- | --- | --- |
+| Same-path mounts | The container's Paseo home and this machine's Paseo worktrees have the same path on both sides, so a prune keeps their records | When the container is created |
+| Repository link | In the container, as root, links this machine's repository path to its folder there | Every daemon start and check; lost on rebuild |
+| Snapshots | Copies working records to `<container home>/devcontainer-guard/snapshots`, kept until both sides confirm the folder is gone | Every check |
+| Checks | Sorts worktrees into safe, at risk, and broken | Every 15 seconds while the app is open, every minute otherwise |
+| Companion plugin | `devcontainer-guard`, in the container's Paseo daemon, repairs after archives there | Installed before the daemon starts |
+| Warning | Shown once when you create a workspace here for a repository that also runs in a container | Workspace creation |
+
+> [!NOTE]
+> - The companion plugin needs Paseo 0.15 or later in the container. Installing it sets `pluginsEnabled` in that daemon's config, which also starts any other plugin configured there, and skips the trust prompt. If you disable it with `paseo plugin disable devcontainer-guard`, it stays disabled.
+> - With Docker Desktop, the container can see this machine's changes to `.git` late. If git fails in the container right after a change here, try again a few seconds later.
+> - Turn the guard off with **Guard shared worktrees** under **Shared worktrees** in the plugin's settings.
 
 ## Recover by hand
 
-1. In the broken worktree, read its `.git` file:
+Run these on the side where you use the worktree. Snapshots are under the "Paseo homes folder" setting, `~/.paseo/plugin-data/devcontainer-host/homes` by default.
+
+1. Find the record's name, the last part of the `.git` file:
 
    ```bash
-   cat .git
-   # gitdir: /Users/you/git/app/.git/worktrees/feature-x
+   cat .git   # gitdir: /Users/you/git/app/.git/worktrees/feature-x
    ```
 
-   The last part, `feature-x`, is the record's name.
-
-2. If the `.git` file points at the other side's path, such as `/workspaces/app/...` on your machine, point it at this side's path of the repository:
+2. If it points at the other side's path, point it at this side's:
 
    ```bash
    echo "gitdir: $HOME/git/app/.git/worktrees/feature-x" > .git
    ```
 
-3. If the record is missing, copy it back from the snapshot, leaving out `.guard.json`:
+3. If the record is missing, copy it back from the snapshot:
 
    ```bash
    SNAPSHOT=~/.paseo/plugin-data/devcontainer-host/homes/app/devcontainer-guard/snapshots/feature-x
@@ -68,14 +132,10 @@ With Docker Desktop, the container can take a while to see a file this machine j
    cp "$SNAPSHOT"/HEAD "$SNAPSHOT"/commondir "$SNAPSHOT"/gitdir ~/git/app/.git/worktrees/feature-x/
    ```
 
-   Without a snapshot, create it: `gitdir` holds the worktree's `.git` path, for example `/Users/you/.paseo/worktrees/abc123/feature-x/.git`, `commondir` holds `../..`, and `HEAD` holds `ref: refs/heads/<branch>`.
+   Without a snapshot, create the three files: `gitdir` holds the worktree's `.git` path, `commondir` holds `../..`, and `HEAD` holds `ref: refs/heads/<branch>`.
 
-4. Rebuild the index without touching files:
+4. Rebuild the index without touching files, then check:
 
    ```bash
-   git reset
+   git reset && git status
    ```
-
-   `git status` should now show only your own changes.
-
-Run these on the side where you use the worktree. The home folder above is the default; it is under the "Paseo homes folder" setting when that is set.
