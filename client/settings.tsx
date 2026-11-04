@@ -7,8 +7,9 @@ import {
   SettingsSwitch,
 } from "@getpaseo/plugin/client/ui";
 import { useState } from "react";
-import { Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { type DevcontainerSettings, settingsDefinition } from "../shared/contract";
+import { openGuide } from "./guide";
 
 type TextField =
   | "installCommand"
@@ -103,15 +104,30 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
           {current.persistPaseoHome
             ? input("paseoHomesDir", "Paseo homes folder", "One subfolder per repository.", "~/.paseo/plugin-data/devcontainer-host/homes")
             : null}
-          {current.persistPaseoHome ? (
-            <SettingsSwitch
-              label="Guard shared worktrees"
-              hint="Snapshot the git worktree records this machine and the container share, and restore those an archive or a git worktree prune or repair on the other side breaks. Adds a small plugin to the container's Paseo daemon."
-              value={current.guardWorktrees}
-              disabled={settings.saving}
-              onValueChange={(guardWorktrees) => void save({ guardWorktrees })}
-            />
-          ) : null}
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection
+        title="Shared worktrees"
+        info="A repository used here and in its container shares one .git. Archiving a workspace, or running git worktree prune or repair, on one side can break the other side's worktrees. The guide explains what the plugin repairs, what it cannot catch, and how to recover by hand."
+        trailing={
+          <Pressable accessibilityRole="link" onPress={openGuide} hitSlop={6}>
+            <Text style={{ color: theme.colors.accent, fontSize: 13 }}>Read the guide</Text>
+          </Pressable>
+        }
+      >
+        <SettingsCard>
+          <SettingsSwitch
+            label="Guard shared worktrees"
+            hint={
+              current.persistPaseoHome
+                ? "Snapshot the git worktree records this machine and the container share, and restore those an archive or a git worktree prune or repair on the other side breaks. Adds a small plugin to the container's Paseo daemon."
+                : "Needs Keep the Paseo home, above."
+            }
+            value={current.persistPaseoHome && current.guardWorktrees}
+            disabled={settings.saving || !current.persistPaseoHome}
+            onValueChange={(guardWorktrees) => void save({ guardWorktrees })}
+          />
         </SettingsCard>
       </SettingsSection>
 

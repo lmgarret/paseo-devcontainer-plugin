@@ -4,6 +4,7 @@ import { DevcontainerSettingsScreen } from "./client/settings";
 import { DevcontainerSidebarItem, SCREEN_ID, setSettingsOpener } from "./client/sidebar";
 import { ACTION_META } from "./client/actions";
 import { DEVCONTAINERS_ICON } from "./client/devcontainers-icon";
+import { GUIDE_SCREEN_ID, GuideScreen, setGuideOpener } from "./client/guide";
 import { commandActions, type UiAction } from "./client/state";
 import { type Container, openLogsRpc, openShellRpc, runActionRpc, statusRpc } from "./shared/contract";
 
@@ -18,6 +19,8 @@ export default function contribute(client: PluginClientContext) {
 
   setSettingsOpener(() => client.openSettings(SETTINGS_ID));
   client.addScreen({ id: SCREEN_ID, title: "Dev containers", Component: Screen });
+  setGuideOpener(() => client.openScreen({ screenId: GUIDE_SCREEN_ID }));
+  client.addScreen({ id: GUIDE_SCREEN_ID, title: "Worktrees shared with dev containers", Component: GuideScreen });
   client.addSidebarFooterItem({ id: "devcontainers", title: "Dev containers", Component: DevcontainerSidebarItem });
   client.addSettingsScreen({
     id: SETTINGS_ID,
@@ -33,6 +36,16 @@ export default function contribute(client: PluginClientContext) {
     context: "global",
     onSelect({ openScreen }) {
       openScreen({ screenId: SCREEN_ID });
+    },
+  });
+  client.addCommandCenterItem({
+    id: "devcontainers-worktrees-guide",
+    title: "Dev containers: Worktrees guide",
+    icon: "BookOpen",
+    keywords: [...KEYWORDS, "worktree", "git", "prune", "repair"],
+    context: "global",
+    onSelect({ openScreen }) {
+      openScreen({ screenId: GUIDE_SCREEN_ID });
     },
   });
   client.addCommandCenterItem({

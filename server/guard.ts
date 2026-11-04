@@ -32,11 +32,11 @@ import {
   writeRecordCommand,
 } from "./worktree-guard";
 import type { DockerContainer } from "./discovery";
-import { homeOwner, homesRoot, hostPaseoHome, readConfig, shellQuote, writeConfig } from "./paseo-home";
+import { homeOwner, homesRoot, readConfig, shellQuote, writeConfig } from "./paseo-home";
+import { pluginDir } from "./plugin-dir";
 import { run, toolEnv } from "./process";
 
 export const COMPANION_ID = "devcontainer-guard";
-const PLUGIN_ID = "devcontainer-host";
 // Row refreshes check at most this often; archives and Restore check right away.
 const CHECK_INTERVAL_MS = 15_000;
 const HISTORY_MS = 24 * 60 * 60_000;
@@ -354,22 +354,6 @@ function writeAtomic(path: string, content: string): void {
   renameSync(temp, path);
 }
 
-// This plugin's own folder on this machine: the daemon runs a bundle, so it is read from the
-// daemon's plugin config.
-function pluginSourceDir(): string | null {
-  const plugins = readConfig(hostPaseoHome())?.plugins ?? {};
-  for (const source of Object.values(plugins)) {
-    if (!source.path) continue;
-    try {
-      const manifest = JSON.parse(readFileSync(join(source.path, "paseo-plugin.json"), "utf8")) as { id?: string };
-      if (manifest.id === PLUGIN_ID && existsSync(join(source.path, "server", "companion.ts"))) return source.path;
-    } catch {
-      // Not this plugin.
-    }
-  }
-  return null;
-}
-
 function companionDir(home: string): string {
   return join(home, "plugins", COMPANION_ID);
 }
@@ -411,7 +395,7 @@ export interface CompanionInstall {
 // path, and registers it in that daemon's config. The config is only edited while the daemon is
 // stopped, since a running daemon owns it. A copy that the user disabled stays disabled.
 export function installCompanion(target: GuardTarget, daemonRunning: boolean, log: Log): CompanionInstall | null {
-  const source = pluginSourceDir();
+  const source = pluginDir();
   if (!source) {
     log("Worktree guard: could not find this plugin's folder; the container's companion plugin is not installed.");
     return null;
