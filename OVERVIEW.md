@@ -69,7 +69,7 @@ The repository itself still has a different path on each side, and worktrees cre
 - the card's Restore button repairs what a `git worktree prune` or `repair` run by hand broke;
 - creating a workspace on this machine for a repository that also runs in a container shows a warning once.
 
-[Worktrees shared with a dev container](https://github.com/lmgarret/paseo-devcontainer-plugin/blob/main/docs/worktrees.md) explains what can go wrong, what the plugin cannot catch, and how to recover by hand.
+[Worktrees shared with a dev container](https://github.com/lmgarret/paseo-devcontainer-plugin/blob/main/docs/worktrees.md) explains what can go wrong, what the plugin cannot catch, and how to recover by hand. The same guide opens in Paseo from a container's card, the plugin's settings, or the Command Center.
 
 ## Limits
 

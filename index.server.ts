@@ -9,9 +9,11 @@ import {
   runActionRpc,
   settingsDefinition,
   statusRpc,
+  worktreesGuideRpc,
 } from "./shared/contract";
 import type { PaseoCatalog, WorkspaceRef } from "./server/discovery";
 import { DevcontainerController } from "./server/controller";
+import { readPluginFile } from "./server/plugin-dir";
 import { resolveTool } from "./server/process";
 
 const FORWARD_INTERVAL_MS = 3_000;
@@ -155,6 +157,7 @@ export default function contribute(server: PluginServerContext) {
     paseo = context.paseo;
     return controller.restoreWorktrees(repoPath);
   });
+  server.handle(worktreesGuideRpc, () => ({ markdown: readPluginFile("docs/worktrees.md") }));
   server.handle(projectIconRpc, async ({ projectId }) => ({ icon: await controller.projectIcon(projectId) }));
   server.handle(openShellRpc, async ({ repoPath }, context) => {
     paseo = context.paseo;

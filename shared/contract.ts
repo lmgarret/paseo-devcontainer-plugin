@@ -245,6 +245,13 @@ export const projectIconRpc = defineRpc({
   output: z.object({ icon: z.object({ data: z.string(), mimeType: z.string() }).nullable() }),
 });
 
+// docs/worktrees.md as installed with the daemon's copy of the plugin; null when unreadable.
+export const worktreesGuideRpc = defineRpc({
+  name: "guide.worktrees",
+  input: z.object({}),
+  output: z.object({ markdown: z.string().nullable() }),
+});
+
 // Checks the repository's worktrees now and repairs what can be repaired.
 export const guardRestoreRpc = defineRpc({
   name: "guard.restore",

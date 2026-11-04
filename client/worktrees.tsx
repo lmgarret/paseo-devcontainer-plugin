@@ -1,9 +1,10 @@
-import { openExternalUrl, type PluginHostProps } from "@getpaseo/plugin/client";
+import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { GUARD_DOCS_URL, type Guard } from "../shared/contract";
+import type { Guard } from "../shared/contract";
+import { openGuide } from "./guide";
 import { HoverPressable } from "./hover";
 import { SectionHeading } from "./ports";
 import { type ContainerView, STATUS_KEY, toneColor, useRestoreWorktrees } from "./state";
@@ -134,10 +135,7 @@ export function WorktreesPanel({ theme, layout, view, compact = false }: Worktre
             <Text style={styles.buttonText}>{busy ? "Restoring…" : "Restore"}</Text>
           </HoverPressable>
         ) : null}
-        <Pressable
-          accessibilityRole="link"
-          onPress={() => void openExternalUrl(GUARD_DOCS_URL).catch((error: unknown) => toast.error(String(error)))}
-        >
+        <Pressable accessibilityRole="link" onPress={openGuide}>
           <Text style={styles.link}>What can go wrong</Text>
         </Pressable>
       </View>
