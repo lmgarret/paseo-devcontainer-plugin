@@ -373,6 +373,7 @@ export class WorktreeGuard {
         problem: entry.problem,
         fix: fixLabel(entry, ops, branches.get(entry.name) ?? []),
         branches: branches.get(entry.name) ?? [],
+        target: entry.fix?.kind === "share" ? dirname(entry.fix.gitFile) : null,
       })),
       restored: state.restores,
       companion: companionState(target.home),

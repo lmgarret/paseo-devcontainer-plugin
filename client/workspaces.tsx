@@ -5,6 +5,7 @@ import { Pressable, Text, View } from "react-native";
 import { HoverPressable } from "./hover";
 import { SectionHeading } from "./ports";
 import type { ContainerView, WorkspaceTarget } from "./state";
+import { GuardHealth, slugOf, WorktreeProblemRow, worktreeProblems } from "./worktrees";
 
 type Theme = PluginHostProps["theme"];
 type Workspace = Awaited<ReturnType<ReturnType<typeof getPaseoClient>["workspaces"]["list"]>>["entries"][number];
@@ -76,13 +77,42 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
   );
 
   const note = (text: string) => <Text style={styles.note}>{text}</Text>;
-  const entries = query.data?.entries ?? [];
+  const all = query.data?.entries ?? [];
   const elsewhere = query.data?.elsewhere ?? 0;
+  // Workspaces whose worktree is broken or at risk lead the list, in place of their plain row.
+  const problems = worktreeProblems(view.container.guard).map((problem) => ({
+    problem,
+    workspace: all.find((entry) => entry.workspaceDirectory && slugOf(entry.workspaceDirectory) === slugOf(problem.folder)) ?? null,
+  }));
+  const claimed = new Set(problems.flatMap(({ workspace }) => (workspace ? [workspace.id] : [])));
+  const entries = all.filter((entry) => !claimed.has(entry.id));
   const shown = showAll ? entries : entries.slice(0, SHOWN);
 
   return (
     <View style={styles.section}>
-      <SectionHeading theme={theme} text={entries.length > 0 ? `Workspaces · ${entries.length}` : "Workspaces"} />
+      <SectionHeading
+        theme={theme}
+        text={all.length > 0 ? `Workspaces · ${all.length}` : "Workspaces"}
+        trailing={<GuardHealth theme={theme} guard={view.container.guard} size={layout.compact ? 28 : 20} />}
+      />
+      {problems.map(({ problem, workspace }) => (
+        <WorktreeProblemRow
+          key={`${problem.name}:${problem.folder}`}
+          theme={theme}
+          layout={layout}
+          repoPath={view.container.repoPath}
+          entry={problem}
+          workspace={
+            workspace
+              ? {
+                  title: workspaceTitle(workspace),
+                  branch: workspace.gitRuntime?.currentBranch ?? null,
+                  age: workspace.activityAt ? ago(workspace.activityAt) : null,
+                }
+              : null
+          }
+        />
+      ))}
       {!host
         ? note("Pair this container's daemon in Paseo to see its workspaces here.")
         : !online
@@ -91,7 +121,7 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
             ? note(`Could not list workspaces: ${query.error instanceof Error ? query.error.message : String(query.error)}`)
             : !query.data
               ? note("Loading…")
-              : entries.length === 0
+              : all.length === 0
                 ? note(`No ${project?.name ?? "project"} workspaces yet. Agents you start in this container show up here.`)
                 : null}
       {host

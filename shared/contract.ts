@@ -133,6 +133,8 @@ const guardWorktreeSchema = z.object({
   fix: z.enum(["restore", "share", "recreate"]).nullable(),
   // For recreate: branches it was likely on, most likely first.
   branches: z.array(z.string()),
+  // For make safe: the folder's path both sides see, which the record will use.
+  target: z.string().nullable(),
 });
 
 const guardRestoreSchema = z.object({

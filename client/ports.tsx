@@ -114,7 +114,7 @@ function StateDot({ theme, forward, size }: { theme: Theme; forward: Forward; si
 }
 
 // An uppercase label with a rule, opening each block of a container's details.
-export function SectionHeading({ theme, text }: { theme: Theme; text: string }) {
+export function SectionHeading({ theme, text, trailing }: { theme: Theme; text: string; trailing?: ReactNode }) {
   return (
     // Lines up with the text below it, not with the daemon box's border.
     <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 4, paddingLeft: 8 }}>
@@ -122,6 +122,7 @@ export function SectionHeading({ theme, text }: { theme: Theme; text: string }) 
         {text.toUpperCase()}
       </Text>
       <View style={{ flex: 1, height: 1, backgroundColor: theme.colors.border }} />
+      {trailing}
     </View>
   );
 }

@@ -344,12 +344,11 @@ export function ContainerRow({
 function GuardPill({ theme, view, popover }: { theme: PluginHostProps["theme"]; view: ContainerView; popover: boolean }) {
   const badge = guardBadge(view.container.guard);
   if (!badge || (popover && badge.tone !== "danger")) return null;
+  if (badge.broken + badge.atRisk === 0) return null;
   const counts: [number, string][] = [
     [badge.broken, theme.colors.statusDanger],
     [badge.atRisk, theme.colors.statusWarning],
   ];
-  // Repairs only show while nothing needs attention.
-  if (badge.broken === 0 && badge.atRisk === 0) counts.push([badge.restored, theme.colors.statusSuccess]);
   return (
     <View
       accessibilityLabel={`Worktrees: ${badge.text}`}
@@ -365,7 +364,7 @@ function GuardPill({ theme, view, popover }: { theme: PluginHostProps["theme"]; 
         flexShrink: 0,
       }}
     >
-      <Icon name={badge.broken + badge.atRisk > 0 ? "GitBranch" : "Undo2"} size={12} color={toneColor(badge.tone, theme)} />
+      <Icon name="GitBranch" size={12} color={toneColor(badge.tone, theme)} />
       {counts
         .filter(([count]) => count > 0)
         .map(([count, color]) => (

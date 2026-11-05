@@ -18,7 +18,7 @@ import {
   type WorkspaceTarget,
 } from "./state";
 import { ContainerWorkspaces } from "./workspaces";
-import { WorktreesPanel } from "./worktrees";
+import { WorktreeProblemRow, worktreeProblems } from "./worktrees";
 
 // Popovers and commands cannot navigate; they open this screen with the target in its params.
 export function workspaceParams(target: WorkspaceTarget): PluginScreenParams {
@@ -294,12 +294,7 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
                       layout={layout}
                       view={view}
                       indent={CARD_INDENT}
-                      before={
-                        <>
-                          <ContainerWorkspaces theme={theme} layout={layout} view={view} onOpen={openWorkspace} />
-                          <WorktreesPanel theme={theme} layout={layout} view={view} />
-                        </>
-                      }
+                      before={<ContainerWorkspaces theme={theme} layout={layout} view={view} onOpen={openWorkspace} />}
                     />
                   ) : null}
                 </View>
@@ -359,10 +354,18 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
                         style={[styles.indented, view.container.hidden && { opacity: 0.55 }]}
                       >
                         {row(view, "page")}
-                        {/* Under the row's name, past its status dot. */}
-                        <View style={{ paddingLeft: LEAD }}>
-                          <WorktreesPanel theme={theme} layout={layout} view={view} compact />
-                        </View>
+                        {/* Worktree problems of a stopped container, under its row. */}
+                        {worktreeProblems(view.container.guard).map((problem) => (
+                          <View key={`${problem.name}:${problem.folder}`} style={{ paddingLeft: LEAD }}>
+                            <WorktreeProblemRow
+                              theme={theme}
+                              layout={layout}
+                              repoPath={view.container.repoPath}
+                              entry={problem}
+                              workspace={null}
+                            />
+                          </View>
+                        ))}
                       </View>
                     ))}
                   </View>
