@@ -28,12 +28,20 @@ const ENTRY_META = ".guard.json";
 export type Side = "host" | "container";
 export const SIDE_LABEL: Record<Side, string> = { host: "this machine", container: "the container" };
 
+// A folder of this machine and where the container sees it.
+export interface Mount {
+  source: string;
+  target: string;
+}
+
 export interface GuardConfig {
   // The repository's main checkout on the host, and the same folder in the container.
   hostRepo: string;
   containerRepo: string;
   // <container home>/devcontainer-guard.
   guardDir: string;
+  // The container's other bind mounts, to map its paths to this machine's.
+  mounts?: Mount[];
 }
 
 // What one side sees at a path: a directory, a file, or nothing.
@@ -53,7 +61,15 @@ export type Fix =
   // Another worktree took the record's name: put this one back under a new name and repoint it.
   | { kind: "rename" }
   // Write back the folder's last working `.git` pointer.
-  | { kind: "pointer"; pointer: string };
+  | { kind: "pointer"; pointer: string }
+  // At risk: the record names the folder by a path only one side sees; name it by a path both see.
+  | { kind: "share"; gitFile: string }
+  // A live workspace whose record is gone with no snapshot: recreate it on a branch the caller
+  // picks, under a new name when another worktree took this one.
+  | { kind: "recreate"; rename: boolean };
+
+// Snapshot-based fixes, safe to apply without asking; the others wait for a person.
+export const AUTOMATIC_FIXES: ReadonlySet<Fix["kind"]> = new Set(["record", "rename", "pointer"]);
 
 export interface WorktreeReport {
   name: string;
@@ -106,11 +122,19 @@ function snapshotsDir(config: GuardConfig): string {
   return join(config.guardDir, "snapshots");
 }
 
-// The same path seen from the other side's checkout path, when it is under the repository.
-function translate(config: GuardConfig, path: string, to: Side): string {
-  const [from, into] = to === "host" ? [config.containerRepo, config.hostRepo] : [config.hostRepo, config.containerRepo];
-  if (path === from) return into;
-  return path.startsWith(`${from}/`) ? into + path.slice(from.length) : path;
+// The same path as the other side sees it, through the repository's folder or another mount;
+// the longest match wins. Paths outside every mount are returned as they are.
+export function translate(config: GuardConfig, path: string, to: Side): string {
+  const pairs: [string, string][] = [
+    [config.hostRepo, config.containerRepo],
+    ...(config.mounts ?? []).map(({ source, target }): [string, string] => [source, target]),
+  ];
+  let best: [string, string] | null = null;
+  for (const [host, container] of pairs) {
+    const [from, into] = to === "host" ? [container, host] : [host, container];
+    if ((path === from || path.startsWith(`${from}/`)) && (!best || from.length > best[0].length)) best = [from, into];
+  }
+  return best ? best[1] + path.slice(best[0].length) : path;
 }
 
 function readText(path: string): string | null {
@@ -240,8 +264,9 @@ function asKind(value: string | undefined): PathKind {
   return value === "d" || value === "f" ? value : "-";
 }
 
-// Everything a check needs to look at on each side; `local` reads the shared `.git`.
-export function probeRequest(config: GuardConfig, local: Side): ProbeRequest {
+// Everything a check needs to look at on each side; `local` reads the shared `.git`. `live` holds
+// the folders of live workspaces, so ones whose record is gone are found too.
+export function probeRequest(config: GuardConfig, local: Side, live: readonly string[] = []): ProbeRequest {
   const paths = new Set<string>();
   const gitFiles = new Set<string>();
   const add = (gitFile: string) => {
@@ -256,6 +281,7 @@ export function probeRequest(config: GuardConfig, local: Side): ProbeRequest {
     add(entry.gitFile);
     if (entry.pointer) paths.add(entry.pointer);
   }
+  for (const folder of live) add(join(folder, ".git"));
   return { paths: [...paths], gitFiles: [...gitFiles] };
 }
 
@@ -283,6 +309,7 @@ export function classify(
   local: Side,
   views: Partial<Record<Side, SideView>>,
   now = Date.now(),
+  live: readonly string[] = [],
 ): GuardReport {
   const records = new Map(readRecords(config, local).map((record) => [record.name, record]));
   const snapshots = new Map(readSnapshots(config).map((entry) => [entry.name, entry]));
@@ -397,16 +424,42 @@ export function classify(
       if (visible.size === 1) {
         const [only] = [...visible] as [Side];
         const other: Side = only === "host" ? "container" : "host";
+        // The same folder through a mount, at a path both sides see.
+        const shared = [translate(config, gitFile, "host"), translate(config, gitFile, "container")].find(
+          (path) => path !== gitFile && sides.every((side) => views[side]?.kinds.get(path) === "f"),
+        );
         report(
           "at-risk",
           `Only ${SIDE_LABEL[only]} sees ${folder}, so a git worktree prune in ${SIDE_LABEL[other]} deletes its record.`,
-          null,
+          shared ? { kind: "share", gitFile: shared } : null,
           seen,
         );
         continue;
       }
     }
     report("safe", null, null, seen);
+  }
+  // Live workspaces whose record is gone and was never snapshotted.
+  const covered = new Set(worktrees.map((entry) => translate(config, entry.folder, "host")));
+  for (const folder of live) {
+    if (covered.has(translate(config, folder, "host"))) continue;
+    const gitFile = join(folder, ".git");
+    const seen = seenFrom(gitFile);
+    const name = seen.map((entry) => namedRecord(config, entry.pointer)).find(Boolean);
+    if (!name) continue;
+    const record = records.get(name);
+    if (record && same(record.gitFile, gitFile)) continue;
+    worktrees.push({
+      name,
+      folder,
+      state: "broken",
+      problem: record
+        ? `Its git record now belongs to ${dirname(record.gitFile ?? "")}, and none was saved for this folder.`
+        : "Its git record is gone, and none was saved before; git fails in this folder.",
+      fix: { kind: "recreate", rename: !!record },
+      reachable: seen.map(({ side, folder: reached }) => ({ side, folder: reached })),
+      pointer: seen[0]?.pointer ?? null,
+    });
   }
   worktrees.sort((a, b) => a.folder.localeCompare(b.folder));
   return { checkedAt: now, worktrees, sides };
@@ -503,12 +556,19 @@ export async function restore(
   local: Side,
   report: GuardReport,
   ops: Partial<Record<Side, FolderOps>>,
-  options: { only?: ReadonlySet<string>; exclude?: ReadonlySet<string> } = {},
+  options: {
+    only?: ReadonlySet<string>;
+    exclude?: ReadonlySet<string>;
+    kinds?: ReadonlySet<Fix["kind"]>;
+    // The branch to recreate each record on, by record name.
+    branches?: ReadonlyMap<string, string>;
+  } = {},
 ): Promise<FixResult[]> {
   const snapshots = new Map(readSnapshots(config).map((entry) => [entry.name, entry]));
   const results: FixResult[] = [];
   for (const entry of report.worktrees) {
     if (!entry.fix || (options.only && !options.only.has(entry.name))) continue;
+    if (options.kinds && !options.kinds.has(entry.fix.kind)) continue;
     if (entry.reachable.some(({ folder }) => options.exclude?.has(folder)) || options.exclude?.has(entry.folder)) continue;
     const at = FIX_ORDER.map((side) => entry.reachable.find((reach) => reach.side === side && ops[side])).find(Boolean);
     if (!at) continue;
@@ -517,6 +577,27 @@ export async function restore(
     try {
       if (entry.fix.kind === "pointer") {
         await folderOps.writePointer(join(at.folder, ".git"), entry.fix.pointer);
+      } else if (entry.fix.kind === "share") {
+        // The record lives in the shared `.git`; its folder is not touched.
+        atomicWrite(join(worktreesDir(config, local), entry.name, "gitdir"), `${entry.fix.gitFile}\n`);
+      } else if (entry.fix.kind === "recreate") {
+        const branch = options.branches?.get(entry.name);
+        if (!branch) throw new Error("Pick the branch to recreate it on");
+        const name = entry.fix.rename ? freeName(config, local, entry.name) : entry.name;
+        // Named by its folder's path on this machine: Paseo's worktree folders are mounted at that
+        // same path in the container, so a prune on either side keeps the record.
+        const gitFile = join(translate(config, entry.folder, "host"), ".git");
+        await folderOps.writeRecord(join(worktreesDir(config, at.side), name), {
+          HEAD: `ref: refs/heads/${branch}\n`,
+          commondir: "../..\n",
+          gitdir: `${gitFile}\n`,
+        });
+        if (entry.fix.rename) {
+          const pointerRoot = dirname(entry.pointer ?? join(worktreesDir(config, at.side), entry.name));
+          await folderOps.writePointer(join(at.folder, ".git"), join(pointerRoot, name));
+        }
+        result.restoredAs = name;
+        await folderOps.resetIndex(at.folder, join(worktreesDir(config, at.side), name));
       } else {
         const saved = snapshots.get(entry.name);
         if (!saved) throw new Error("No snapshot of its record");
@@ -645,7 +726,10 @@ export function readGuardConfig(guardDir: string): GuardConfig | null {
   try {
     const parsed = JSON.parse(readFileSync(join(guardDir, GUARD_CONFIG), "utf8")) as Partial<GuardConfig>;
     if (typeof parsed.hostRepo !== "string" || typeof parsed.containerRepo !== "string") return null;
-    return { hostRepo: parsed.hostRepo, containerRepo: parsed.containerRepo, guardDir };
+    const mounts = Array.isArray(parsed.mounts)
+      ? parsed.mounts.filter((mount) => typeof mount?.source === "string" && typeof mount?.target === "string")
+      : [];
+    return { hostRepo: parsed.hostRepo, containerRepo: parsed.containerRepo, guardDir, mounts };
   } catch {
     return null;
   }

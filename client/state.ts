@@ -9,6 +9,7 @@ import {
   dismissJobRpc,
   type Forward,
   type Guard,
+  guardPreviewRpc,
   guardRestoreRpc,
   openLogsRpc,
   openShellRpc,
@@ -298,6 +299,10 @@ export function groupByProject(views: ContainerView[]): ProjectGroup[] {
     groups.set(key, group);
   }
   return [...groups.values()].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }));
+}
+
+export function useGuardPreview() {
+  return useRpc(guardPreviewRpc);
 }
 
 export function useRestoreWorktrees() {

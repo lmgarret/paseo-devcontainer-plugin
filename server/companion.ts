@@ -13,6 +13,7 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  AUTOMATIC_FIXES,
   classify,
   errorText,
   GUARD_DIR,
@@ -69,7 +70,7 @@ async function afterArchive(archived: string): Promise<void> {
 async function repair(config: GuardConfig, archived: string): Promise<void> {
   const exclude = new Set([archived]);
   let report = inspect(config);
-  const restored = await restore(config, "container", report, { container: localOps() }, { exclude });
+  const restored = await restore(config, "container", report, { container: localOps() }, { exclude, kinds: AUTOMATIC_FIXES });
   if (restored.length > 0) report = inspect(config);
   snapshot(config, "container", report);
   // Records still missing whose folders the container cannot see: the host checks those.

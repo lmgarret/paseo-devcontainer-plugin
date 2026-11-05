@@ -3,10 +3,12 @@
 // worktrees from here and, through `docker exec`, from its container; repairs after archives and
 // on request; and installs the companion plugin that does the same after the container's own
 // archives.
-import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type { DevcontainerSettings, Guard } from "../shared/contract";
 import {
+  AUTOMATIC_FIXES,
   classify,
   errorText,
   type FixResult,
@@ -28,6 +30,8 @@ import {
   settleArchive,
   type Side,
   snapshot,
+  translate,
+  type WorktreeReport,
   writePointerCommand,
   writeRecordCommand,
 } from "./worktree-guard";
@@ -73,7 +77,12 @@ export function guardTarget(
     return {
       repoPath,
       home,
-      config: { hostRepo, containerRepo: container.workspaceFolder, guardDir: join(home, GUARD_DIR) },
+      config: {
+        hostRepo,
+        containerRepo: container.workspaceFolder,
+        guardDir: join(home, GUARD_DIR),
+        mounts: container.mounts,
+      },
       container: { id: container.id, remoteUser: container.remoteUser, running: container.running },
     };
   } catch {
@@ -119,10 +128,24 @@ interface RepoState {
   reportCheck: boolean;
   // Recent archives: checks until `until` repair, but never bring back these folders.
   archives: { until: number; folders: Set<string> };
+  report: GuardReport | null;
+}
+
+// What a check may repair: snapshot fixes on its own after archives, every fix that needs no
+// choice on Restore, or one worktree's fix, whatever it is, when asked for by name.
+export type RepairMode = "auto" | "all" | { name: string; branch?: string };
+
+interface CheckOptions {
+  trigger: string;
+  repair?: RepairMode;
+  exclude?: string[];
 }
 
 export class WorktreeGuard {
   private readonly repos = new Map<string, RepoState>();
+
+  // Folders of this machine's live Paseo workspaces.
+  constructor(private readonly hostWorkspaces: () => string[]) {}
 
   // The row's last result; starts a check when it is stale. Never waits for one.
   status(target: GuardTarget, docker: string | null): Guard {
@@ -154,11 +177,39 @@ export class WorktreeGuard {
     return results;
   }
 
-  // Checks now; with `restore`, repairs what it can, except folders in `exclude`.
+  // Tracked files that differ from `branch` in a worktree whose record would be recreated on it.
+  async preview(target: GuardTarget, name: string, branch: string): Promise<{ files: string[]; total: number }> {
+    const entry = this.recreatable(target, name, branch);
+    const folder = translate(target.config, entry.folder, "host");
+    if (!existsSync(join(folder, ".git"))) throw new Error("Its folder is not on this machine");
+    // A throwaway index, so neither the folder nor the repository's index changes.
+    const env = { ...process.env, GIT_INDEX_FILE: join(tmpdir(), `devcontainer-guard-${process.pid}-${Date.now()}.index`) };
+    const git = ["-c", "safe.directory=*", "--git-dir", join(target.config.hostRepo, ".git"), "--work-tree", folder];
+    try {
+      await runGit([...git, "read-tree", `refs/heads/${branch}`], env);
+      const files = (await runGit([...git, "-C", folder, "diff", "--name-only"], env)).split("\n").filter(Boolean);
+      return { files: files.slice(0, 20), total: files.length };
+    } finally {
+      rmSync(env.GIT_INDEX_FILE, { force: true });
+    }
+  }
+
+  // The last check's entry for a record to recreate, with a branch it offered.
+  private recreatable(target: GuardTarget, name: string, branch: string | undefined): WorktreeReport {
+    const state = this.state(target);
+    const entry = state.report?.worktrees.find((candidate) => candidate.name === name && candidate.fix?.kind === "recreate");
+    if (!entry) throw new Error(`${name} has no record to recreate; check again`);
+    if (!branch || !state.status.worktrees.find((candidate) => candidate.name === name)?.branches.includes(branch)) {
+      throw new Error(`Pick one of the branches offered for ${name}`);
+    }
+    return entry;
+  }
+
+  // Checks now; `repair` says what it may fix, never in folders of `exclude`.
   check(
     target: GuardTarget,
     docker: string,
-    options: { trigger: string; restore?: boolean; exclude?: string[] },
+    options: CheckOptions,
   ): Promise<{ status: Guard; results: FixResult[] }> {
     const state = this.state(target, docker);
     // One check at a time per repository: a repair must not race a snapshot.
@@ -206,6 +257,7 @@ export class WorktreeGuard {
         handledContainerStatus: 0,
         reportCheck: false,
         archives: { until: 0, folders: new Set() },
+        report: null,
       };
       this.repos.set(target.repoPath, state);
     }
@@ -216,14 +268,23 @@ export class WorktreeGuard {
     target: GuardTarget,
     docker: string,
     state: RepoState,
-    options: { trigger: string; restore?: boolean; exclude?: string[] },
+    options: CheckOptions,
   ): Promise<{ status: Guard; results: FixResult[] }> {
     state.lastCheck = Date.now();
     const { config } = target;
     let error: string | null = null;
     writeGuardConfig(config);
+    // Live workspaces of both daemons, so a folder whose record is gone shows up.
+    const live = [...this.hostWorkspaces()];
+    if (target.container.running) {
+      try {
+        live.push(...(await containerWorkspaces(docker, target)));
+      } catch (listError) {
+        error = `Could not list the container's workspaces: ${errorText(listError)}`;
+      }
+    }
     const inspect = async (): Promise<GuardReport> => {
-      const request = probeRequest(config, "host");
+      const request = probeRequest(config, "host", live);
       const views: { host: ReturnType<typeof localView>; container?: ReturnType<typeof parseProbe> } = {
         host: localView(request),
       };
@@ -234,7 +295,7 @@ export class WorktreeGuard {
           error = `Could not check the container: ${errorText(probeError)}`;
         }
       }
-      return classify(config, "host", views);
+      return classify(config, "host", views, Date.now(), live);
     };
 
     let report = await inspect();
@@ -251,10 +312,21 @@ export class WorktreeGuard {
     };
 
     const archiving = state.archives.until >= Date.now();
-    if (options.restore || archiving) {
+    const repair: RepairMode | undefined = options.repair ?? (archiving ? "auto" : undefined);
+    if (repair) {
       const exclude = new Set([...(options.exclude ?? []), ...(archiving ? state.archives.folders : [])]);
-      const fixed = await restore(config, "host", report, ops, { exclude });
-      record("host", archiving && !options.restore ? "archive" : options.trigger, fixed);
+      const scope =
+        repair === "auto"
+          ? { kinds: AUTOMATIC_FIXES }
+          : repair === "all"
+            ? { kinds: new Set([...AUTOMATIC_FIXES, "share" as const]) }
+            : {
+                only: new Set([repair.name]),
+                branches: new Map(repair.branch ? [[repair.name, repair.branch]] : []),
+              };
+      if (typeof repair === "object" && repair.branch) this.recreatable(target, repair.name, repair.branch);
+      const fixed = await restore(config, "host", report, ops, { exclude, ...scope });
+      record("host", options.repair ? options.trigger : "archive", fixed);
       results.push(...fixed);
     }
     // The companion repaired after an archive in the container, and left what it could not reach.
@@ -267,6 +339,7 @@ export class WorktreeGuard {
         const fixed = await restore(config, "host", report, ops, {
           only: new Set(companion.pending),
           exclude: new Set(companion.archived ? [companion.archived] : []),
+          kinds: AUTOMATIC_FIXES,
         });
         record("host", companion.trigger, fixed);
         results.push(...fixed);
@@ -276,7 +349,12 @@ export class WorktreeGuard {
     snapshot(config, "host", report);
 
     state.restores = recent(state.restores);
+    state.report = report;
     const worktrees = report.worktrees.filter((entry) => entry.state !== "safe");
+    const branches = new Map<string, string[]>();
+    for (const entry of worktrees) {
+      if (entry.fix?.kind === "recreate") branches.set(entry.name, await branchCandidates(config, entry.folder));
+    }
     state.status = {
       checkedAt: report.checkedAt,
       containerChecked: report.sides.includes("container"),
@@ -287,13 +365,79 @@ export class WorktreeGuard {
         folder: entry.folder,
         state: entry.state,
         problem: entry.problem,
-        fixable: entry.fix !== null && entry.reachable.some(({ side }) => ops[side]),
+        fix: fixLabel(entry, ops, branches.get(entry.name) ?? []),
+        branches: branches.get(entry.name) ?? [],
       })),
       restored: state.restores,
       companion: companionState(target.home),
     };
     return { status: { ...state.status }, results };
   }
+}
+
+function fixLabel(
+  entry: WorktreeReport,
+  ops: Partial<Record<Side, FolderOps>>,
+  branches: string[],
+): Guard["worktrees"][number]["fix"] {
+  if (!entry.fix || !entry.reachable.some(({ side }) => ops[side])) return null;
+  if (entry.fix.kind === "share") return "share";
+  if (entry.fix.kind === "recreate") return branches.length > 0 ? "recreate" : null;
+  return "restore";
+}
+
+// Branches a record-less worktree was likely on: Paseo names a worktree's branch after its folder
+// and may rename it later, so a branch at the same commit as the folder's name comes first.
+// Branches checked out elsewhere are left out.
+async function branchCandidates(config: GuardConfig, folder: string): Promise<string[]> {
+  const common = join(config.hostRepo, ".git");
+  let refs: [string, string][];
+  try {
+    refs = (await runGit(["--git-dir", common, "for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads"]))
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => line.split("\t") as [string, string]);
+  } catch {
+    return [];
+  }
+  const checkedOut = new Set<string>();
+  const headOf = (dir: string) => /^ref: refs\/heads\/(.+)$/m.exec(readText(join(dir, "HEAD")) ?? "")?.[1];
+  for (const dir of [common, ...listRecordDirs(common)]) {
+    const branch = headOf(dir);
+    if (branch) checkedOut.add(branch);
+  }
+  const slug = basename(folder);
+  const slugTip = refs.find(([name]) => name === slug)?.[1];
+  if (!slugTip) return [];
+  const renamed = refs.filter(([name, tip]) => name !== slug && tip === slugTip).map(([name]) => name);
+  return [...renamed, slug].filter((name) => !checkedOut.has(name)).slice(0, 5);
+}
+
+function listRecordDirs(common: string): string[] {
+  try {
+    return readdirSync(join(common, "worktrees")).map((name) => join(common, "worktrees", name));
+  } catch {
+    return [];
+  }
+}
+
+function runGit(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
+  return run("git", args, { env, timeoutMs: EXEC_TIMEOUT_MS }).then((result) => {
+    if (result.code !== 0) throw new Error(result.stderr.trim().split("\n").pop() || `git exit ${result.code}`);
+    return result.stdout;
+  });
+}
+
+// The container daemon's workspace folders, as this machine sees them.
+async function containerWorkspaces(docker: string, target: GuardTarget): Promise<string[]> {
+  const result = await run(
+    docker,
+    ["exec", "-u", target.container.remoteUser, target.container.id, "bash", "-lc", "paseo workspace ls --json"],
+    { env: toolEnv([docker]), timeoutMs: EXEC_TIMEOUT_MS },
+  );
+  if (result.code !== 0) throw new Error(result.stderr.trim().split("\n").pop() || `exit ${result.code}`);
+  const entries = JSON.parse(result.stdout || "[]") as { cwd?: string }[];
+  return entries.flatMap((entry) => (entry.cwd ? [translate(target.config, entry.cwd, "host")] : []));
 }
 
 function recent(restores: Guard["restored"]): Guard["restored"] {
@@ -332,7 +476,11 @@ function containerOps(docker: string, target: GuardTarget): FolderOps {
 
 function writeGuardConfig(config: GuardConfig): void {
   const file = join(config.guardDir, GUARD_CONFIG);
-  const content = `${JSON.stringify({ hostRepo: config.hostRepo, containerRepo: config.containerRepo }, null, 2)}\n`;
+  const content = `${JSON.stringify(
+    { hostRepo: config.hostRepo, containerRepo: config.containerRepo, mounts: config.mounts ?? [] },
+    null,
+    2,
+  )}\n`;
   if (readText(file) === content) return;
   mkdirSync(config.guardDir, { recursive: true });
   writeAtomic(file, content);

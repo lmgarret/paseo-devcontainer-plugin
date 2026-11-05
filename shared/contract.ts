@@ -122,8 +122,11 @@ const guardWorktreeSchema = z.object({
   folder: z.string(),
   state: z.enum(["safe", "at-risk", "broken"]),
   problem: z.string().nullable(),
-  // Restore can repair it.
-  fixable: z.boolean(),
+  // What can repair it: Restore from its snapshot, Make safe by naming it with a path both sides
+  // see, or Recreate its record on a branch you pick.
+  fix: z.enum(["restore", "share", "recreate"]).nullable(),
+  // For recreate: branches it was likely on, most likely first.
+  branches: z.array(z.string()),
 });
 
 const guardRestoreSchema = z.object({
@@ -253,8 +256,18 @@ export const worktreesGuideRpc = defineRpc({
 });
 
 // Checks the repository's worktrees now and repairs what can be repaired.
+// Without a name: every restore and make-safe fix. With one: that worktree's fix, any kind;
+// recreate needs a branch.
 export const guardRestoreRpc = defineRpc({
   name: "guard.restore",
-  input: z.object({ repoPath: z.string() }),
+  input: z.object({ repoPath: z.string(), name: z.string().optional(), branch: z.string().optional() }),
   output: z.object({ restored: z.number(), failed: z.number(), remaining: z.number() }),
+});
+
+// Tracked files whose content differs from the branch a record would be recreated on: what
+// `git status` shows as changes afterwards.
+export const guardPreviewRpc = defineRpc({
+  name: "guard.preview",
+  input: z.object({ repoPath: z.string(), name: z.string(), branch: z.string() }),
+  output: z.object({ files: z.array(z.string()), total: z.number() }),
 });
