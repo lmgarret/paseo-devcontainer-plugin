@@ -43,6 +43,8 @@ export interface DockerContainer {
   // `home`: the plugin's managed Paseo home, mounted at its own path; null for any other home.
   paseoHome: { persistent: boolean; serverId: string | null; home: string | null };
   hostNetwork: boolean;
+  // Bind mounts: a folder of this machine and where the container sees it.
+  mounts: { source: string; target: string }[];
 }
 
 export interface Candidate {
@@ -113,6 +115,9 @@ function toDockerContainer(raw: InspectResult): DockerContainer {
     workspaceFolder: workspaceFolderOf(raw, labels["devcontainer.local_folder"]),
     paseoHome: paseoHomeOf(raw, remoteUser),
     hostNetwork: raw.HostConfig?.NetworkMode === "host",
+    mounts: (raw.Mounts ?? [])
+      .filter((mount) => mount.Type === "bind")
+      .map((mount) => ({ source: hostPathOf(mount), target: mount.Destination })),
   };
 }
 

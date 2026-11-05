@@ -2,6 +2,7 @@ import type { PluginHandlerContext, PluginServerContext } from "@getpaseo/plugin
 import {
   type Action,
   dismissJobRpc,
+  guardPreviewRpc,
   guardRestoreRpc,
   openLogsRpc,
   openShellRpc,
@@ -153,10 +154,11 @@ export default function contribute(server: PluginServerContext) {
     controller.dismiss(repoPath);
     return {};
   });
-  server.handle(guardRestoreRpc, ({ repoPath }, context) => {
+  server.handle(guardRestoreRpc, ({ repoPath, name, branch }, context) => {
     paseo = context.paseo;
-    return controller.restoreWorktrees(repoPath);
+    return controller.restoreWorktrees(repoPath, name, branch);
   });
+  server.handle(guardPreviewRpc, ({ repoPath, name, branch }) => controller.previewRecreate(repoPath, name, branch));
   server.handle(worktreesGuideRpc, () => ({ markdown: readPluginFile("docs/worktrees.md") }));
   server.handle(projectIconRpc, async ({ projectId }) => ({ icon: await controller.projectIcon(projectId) }));
   server.handle(openShellRpc, async ({ repoPath }, context) => {

@@ -1,13 +1,13 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { useToast } from "@getpaseo/plugin/client/ui";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Guard } from "../shared/contract";
 import { openGuide } from "./guide";
 import { HoverPressable } from "./hover";
 import { SectionHeading } from "./ports";
-import { type ContainerView, STATUS_KEY, toneColor, useRestoreWorktrees } from "./state";
+import { type ContainerView, STATUS_KEY, toneColor, useGuardPreview, useRestoreWorktrees } from "./state";
 
 const MONO = "monospace";
 
@@ -59,14 +59,14 @@ export function WorktreesPanel({ theme, layout, view, compact = false }: Worktre
   if (!guard) return null;
 
   const issues = guard.worktrees;
-  const fixable = issues.some((entry) => entry.fixable);
+  const fixable = issues.some((entry) => entry.fix === "restore" || entry.fix === "share");
   const restored = guard.restored;
   if (compact && issues.length === 0 && restored.length === 0) return null;
 
-  const restore = async () => {
+  const restore = async (one?: { name: string; branch?: string }) => {
     setBusy(true);
     try {
-      const result = await restoreWorktrees({ repoPath: view.container.repoPath });
+      const result = await restoreWorktrees({ repoPath: view.container.repoPath, ...one });
       const parts = [
         result.restored > 0 ? `restored ${result.restored}` : null,
         result.failed > 0 ? `${result.failed} failed` : null,
@@ -99,7 +99,28 @@ export function WorktreesPanel({ theme, layout, view, compact = false }: Worktre
               {shortPath(entry.folder)}
             </Text>
             {entry.problem ? <Text style={styles.muted}>{entry.problem}</Text> : null}
+            {entry.fix === "recreate" ? (
+              <RecreateChooser
+                theme={theme}
+                repoPath={view.container.repoPath}
+                name={entry.name}
+                branches={entry.branches}
+                busy={busy}
+                onRecreate={(branch) => void restore({ name: entry.name, branch })}
+              />
+            ) : null}
           </View>
+          {entry.fix === "restore" || entry.fix === "share" ? (
+            <HoverPressable
+              accessibilityRole="button"
+              disabled={busy}
+              onPress={() => void restore({ name: entry.name })}
+              style={[styles.button, busy && { opacity: 0.5 }]}
+              hoveredStyle={styles.hovered}
+            >
+              <Text style={styles.buttonText}>{entry.fix === "share" ? "Make safe" : "Restore"}</Text>
+            </HoverPressable>
+          ) : null}
         </View>
       ))}
       {restored.map((entry) => (
@@ -139,6 +160,66 @@ export function WorktreesPanel({ theme, layout, view, compact = false }: Worktre
           <Text style={styles.link}>What can go wrong</Text>
         </Pressable>
       </View>
+    </View>
+  );
+}
+
+// Pick the branch to recreate a record on, see what would differ, then confirm.
+function RecreateChooser({
+  theme,
+  repoPath,
+  name,
+  branches,
+  busy,
+  onRecreate,
+}: {
+  theme: PluginHostProps["theme"];
+  repoPath: string;
+  name: string;
+  branches: string[];
+  busy: boolean;
+  onRecreate(branch: string): void;
+}) {
+  const [branch, setBranch] = useState(branches[0] ?? "");
+  const preview = useGuardPreview();
+  const query = useQuery({
+    queryKey: ["devcontainer-guard-preview", repoPath, name, branch],
+    queryFn: () => preview({ repoPath, name, branch }),
+    enabled: branch !== "",
+  });
+  const chip = (selected: boolean) => ({
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: selected ? theme.colors.accent : theme.colors.border,
+  });
+  return (
+    <View style={{ gap: 4, paddingTop: 4 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
+        {branches.map((candidate) => (
+          <Pressable key={candidate} onPress={() => setBranch(candidate)} style={chip(candidate === branch)}>
+            <Text style={{ color: theme.colors.foreground, fontFamily: MONO, fontSize: 11 }}>{candidate}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11 }}>
+        {query.isPending
+          ? "Comparing with the branch…"
+          : query.error
+            ? `Could not compare: ${query.error instanceof Error ? query.error.message : String(query.error)}`
+            : query.data.total === 0
+              ? "Files match the branch: nothing will show as changed."
+              : `${query.data.total} tracked ${query.data.total === 1 ? "file differs" : "files differ"} from the branch; they will show as changes, untouched.`}
+      </Text>
+      <Pressable
+        accessibilityRole="button"
+        disabled={busy || !branch}
+        onPress={() => onRecreate(branch)}
+        style={[chip(true), { alignSelf: "flex-start", paddingVertical: 4 }, busy && { opacity: 0.5 }]}
+      >
+        <Text style={{ color: theme.colors.foreground, fontSize: 12 }}>Recreate on {branch}</Text>
+      </Pressable>
     </View>
   );
 }

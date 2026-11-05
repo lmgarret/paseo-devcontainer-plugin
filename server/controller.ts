@@ -71,7 +71,7 @@ export class DevcontainerController {
   // Last server ID a daemon reported per repository, for when the container is stopped.
   private readonly knownServerIds = new Map<string, string>();
   private readonly forwarder = new PortForwarder();
-  private readonly guard = new WorktreeGuard();
+  private readonly guard = new WorktreeGuard(() => this.catalog.workspaces.map((workspace) => workspace.directory));
   private notices: Notice[] = [];
   private nextJobId = 1;
   private catalog: PaseoCatalog = { projects: [], workspaces: [] };
@@ -207,20 +207,37 @@ export class DevcontainerController {
     return project ? readProjectIcon(project) : null;
   }
 
-  // The Restore button: checks now and repairs what can be repaired.
-  async restoreWorktrees(repoPath: string): Promise<{ restored: number; failed: number; remaining: number }> {
-    const { settings, tools, candidates } = await this.discover();
-    const candidate = candidates.find((entry) => entry.repoPath === repoPath);
-    const target = candidate ? guardTarget(settings, candidate.repoPath, candidate.container) : null;
-    if (!candidate || !target) throw new Error("The worktree guard does not cover this container");
-    if (!tools.docker) throw new Error("docker not found. Install Docker Desktop or set the docker path in settings.");
-    const { status, results } = await this.guard.check(target, tools.docker, { trigger: "manual", restore: true });
+  // Restore and Make safe for every worktree, or one worktree's fix; recreate needs a branch.
+  async restoreWorktrees(
+    repoPath: string,
+    name?: string,
+    branch?: string,
+  ): Promise<{ restored: number; failed: number; remaining: number }> {
+    const { target, docker } = await this.requireGuard(repoPath);
+    const { status, results } = await this.guard.check(target, docker, {
+      trigger: "manual",
+      repair: name ? { name, ...(branch ? { branch } : {}) } : "all",
+    });
     this.cached = null;
     return {
       restored: results.filter((result) => !result.error).length,
       failed: results.filter((result) => result.error).length,
       remaining: status.worktrees.filter((entry) => entry.state === "broken").length,
     };
+  }
+
+  async previewRecreate(repoPath: string, name: string, branch: string) {
+    const { target } = await this.requireGuard(repoPath);
+    return this.guard.preview(target, name, branch);
+  }
+
+  private async requireGuard(repoPath: string): Promise<{ target: GuardTarget; docker: string }> {
+    const { settings, tools, candidates } = await this.discover();
+    const candidate = candidates.find((entry) => entry.repoPath === repoPath);
+    const target = candidate ? guardTarget(settings, candidate.repoPath, candidate.container) : null;
+    if (!candidate || !target) throw new Error("The worktree guard does not cover this container");
+    if (!tools.docker) throw new Error("docker not found. Install Docker Desktop or set the docker path in settings.");
+    return { target, docker: tools.docker };
   }
 
   // A workspace was archived here: Paseo's `git worktree prune` deletes the records of worktrees
