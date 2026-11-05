@@ -3,12 +3,13 @@ import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
-import { ContainerRow } from "./actions";
+import { ContainerRow, WithTooltip } from "./actions";
 import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
 import { HoverPressable } from "./hover";
 import { containerParams, workspaceParams } from "./screen";
 import {
   appForwards,
+  guardBadge,
   type ContainerView,
   type DevcontainersState,
   kindColor,
@@ -257,6 +258,11 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
   const label = `Dev containers · ${counts.length > 0 ? counts.join(", ") : "none running"}`;
   // The first active view is the most urgent one.
   const lead = active[0];
+  // Broken worktrees are worth a glance from the sidebar; at-risk ones wait for the page.
+  const brokenGit = shown.flatMap((view) => {
+    const badge = guardBadge(view.container.guard);
+    return badge && badge.broken > 0 ? [{ name: view.container.name, count: badge.broken }] : [];
+  });
 
   return (
     <SidebarRow
@@ -265,14 +271,26 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
       active={currentScreen?.screenId === SCREEN_ID}
       onPress={() => openPopover(ContainersPopover)}
       trailing={
-        busy ? (
-          <ActivityIndicator size="small" color={kindColor("busy", theme)} style={{ marginRight: 4 }} />
-        ) : lead ? (
-          <View
-            accessibilityLabel={lead.label}
-            style={{ width: 8, height: 8, borderRadius: 4, marginRight: 4, backgroundColor: kindColor(lead.kind, theme) }}
-          />
-        ) : null
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginRight: 4 }}>
+          {brokenGit.length > 0 ? (
+            <WithTooltip
+              theme={theme}
+              align="right"
+              top={-46}
+              text={`Git is broken in ${brokenGit.map(({ name, count }) => `${count} ${name} ${count === 1 ? "workspace" : "workspaces"}`).join(", ")}. Open Dev containers to fix it.`}
+            >
+              <Icon name="GitBranch" size={13} color={theme.colors.statusDanger} />
+            </WithTooltip>
+          ) : null}
+          {busy ? (
+            <ActivityIndicator size="small" color={kindColor("busy", theme)} />
+          ) : lead ? (
+            <View
+              accessibilityLabel={lead.label}
+              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kindColor(lead.kind, theme) }}
+            />
+          ) : null}
+        </View>
       }
     />
   );

@@ -1,6 +1,6 @@
 /// <reference types="node" />
 import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type Action,
@@ -380,7 +380,13 @@ export class DevcontainerController {
     );
     const since = Date.now() - NOTICE_MS;
     this.notices = this.notices.filter((notice) => notice.at >= since);
-    return { containers, dockerError, tools, notices: [...this.notices] };
+    return {
+      containers,
+      dockerError,
+      tools,
+      notices: [...this.notices],
+      machine: { name: hostname().replace(/\.local$/, "") || "This machine", platform: process.platform },
+    };
   }
 
   private exec(docker: string, target: Target, script: string, options: { timeoutMs: number; onLine?: Log }) {
