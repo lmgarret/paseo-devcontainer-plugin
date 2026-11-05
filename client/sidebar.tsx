@@ -3,7 +3,8 @@ import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
-import { ContainerRow, WithTooltip } from "./actions";
+import { ContainerRow } from "./actions";
+import { IssueBadge } from "./worktrees";
 import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
 import { HoverPressable } from "./hover";
 import { containerParams, workspaceParams } from "./screen";
@@ -258,11 +259,14 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
   const label = `Dev containers · ${counts.length > 0 ? counts.join(", ") : "none running"}`;
   // The first active view is the most urgent one.
   const lead = active[0];
-  // Broken worktrees are worth a glance from the sidebar; at-risk ones wait for the page.
-  const brokenGit = shown.flatMap((view) => {
-    const badge = guardBadge(view.container.guard);
-    return badge && badge.broken > 0 ? [{ name: view.container.name, count: badge.broken }] : [];
-  });
+  // Every container's worktree issues, at a glance.
+  const issues = shown.reduce(
+    (sum, view) => {
+      const badge = guardBadge(view.container.guard);
+      return { broken: sum.broken + (badge?.broken ?? 0), atRisk: sum.atRisk + (badge?.atRisk ?? 0) };
+    },
+    { broken: 0, atRisk: 0 },
+  );
 
   return (
     <SidebarRow
@@ -272,16 +276,7 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
       onPress={() => openPopover(ContainersPopover)}
       trailing={
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginRight: 4 }}>
-          {brokenGit.length > 0 ? (
-            <WithTooltip
-              theme={theme}
-              align="right"
-              top={-46}
-              text={`Git is broken in ${brokenGit.map(({ name, count }) => `${count} ${name} ${count === 1 ? "workspace" : "workspaces"}`).join(", ")}. Open Dev containers to fix it.`}
-            >
-              <Icon name="GitBranch" size={13} color={theme.colors.statusDanger} />
-            </WithTooltip>
-          ) : null}
+          {issues.broken + issues.atRisk > 0 ? <IssueBadge theme={theme} counts={issues} /> : null}
           {busy ? (
             <ActivityIndicator size="small" color={kindColor("busy", theme)} />
           ) : lead ? (

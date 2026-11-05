@@ -131,8 +131,8 @@ const guardWorktreeSchema = z.object({
   // What can repair it: Restore from its snapshot, Make safe by naming it with a path both sides
   // see, or Recreate its record on a branch you pick.
   fix: z.enum(["restore", "share", "recreate"]).nullable(),
-  // For recreate: branches it was likely on, most likely first.
-  branches: z.array(z.string()),
+  // For recreate: branches it was likely on, most likely first, with their last commit.
+  branches: z.array(z.object({ name: z.string(), date: z.string(), subject: z.string() })),
   // For make safe: the folder's path both sides see, which the record will use.
   target: z.string().nullable(),
 });
@@ -217,7 +217,8 @@ const statusSchema = z.object({
   tools: z.object({ docker: z.string().nullable(), devcontainer: z.string().nullable() }),
   notices: z.array(noticeSchema),
   // The machine this plugin's daemon runs on: its name and Node's platform, for labels and icons.
-  machine: z.object({ name: z.string(), platform: z.string() }),
+  // `serverId` names the Paseo host, whose label the app shows.
+  machine: z.object({ name: z.string(), platform: z.string(), serverId: z.string().nullable() }),
 });
 export type Status = z.infer<typeof statusSchema>;
 

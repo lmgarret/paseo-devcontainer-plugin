@@ -17,8 +17,8 @@ import {
   useDevcontainers,
   type WorkspaceTarget,
 } from "./state";
-import { ContainerWorkspaces } from "./workspaces";
-import { WorktreeProblemRow, worktreeProblems } from "./worktrees";
+import { ContainerWorkspaces, WorkspaceRow } from "./workspaces";
+import { slugOf, worktreeProblems } from "./worktrees";
 
 // Popovers and commands cannot navigate; they open this screen with the target in its params.
 export function workspaceParams(target: WorkspaceTarget): PluginScreenParams {
@@ -357,12 +357,16 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
                         {/* Worktree problems of a stopped container, under its row. */}
                         {worktreeProblems(view.container.guard).map((problem) => (
                           <View key={`${problem.name}:${problem.folder}`} style={{ paddingLeft: LEAD }}>
-                            <WorktreeProblemRow
+                            <WorkspaceRow
                               theme={theme}
                               layout={layout}
-                              repoPath={view.container.repoPath}
-                              entry={problem}
-                              workspace={null}
+                              view={view}
+                              title={problem.title ?? slugOf(problem.folder)}
+                              branch={null}
+                              status={null}
+                              age={null}
+                              problem={problem}
+                              onOpen={null}
                             />
                           </View>
                         ))}

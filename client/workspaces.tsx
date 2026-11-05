@@ -1,11 +1,12 @@
 import { getPaseoClient, type PluginHostProps } from "@getpaseo/plugin/client";
+import { Icon } from "@getpaseo/plugin/client/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import { HoverPressable } from "./hover";
 import { SectionHeading } from "./ports";
+import type { GuardWorktree } from "../shared/contract";
 import type { ContainerView, WorkspaceTarget } from "./state";
-import { GuardHealth, slugOf, WorktreeProblemRow, worktreeProblems } from "./worktrees";
+import { ProblemButton, slugOf, worktreeProblems } from "./worktrees";
 
 type Theme = PluginHostProps["theme"];
 type Workspace = Awaited<ReturnType<ReturnType<typeof getPaseoClient>["workspaces"]["list"]>>["entries"][number];
@@ -90,27 +91,19 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
 
   return (
     <View style={styles.section}>
-      <SectionHeading
-        theme={theme}
-        text={all.length > 0 ? `Workspaces · ${all.length}` : "Workspaces"}
-        trailing={<GuardHealth theme={theme} guard={view.container.guard} size={layout.compact ? 28 : 20} />}
-      />
+      <SectionHeading theme={theme} text={all.length > 0 ? `Workspaces · ${all.length}` : "Workspaces"} />
       {problems.map(({ problem, workspace }) => (
-        <WorktreeProblemRow
+        <WorkspaceRow
           key={`${problem.name}:${problem.folder}`}
           theme={theme}
           layout={layout}
-          repoPath={view.container.repoPath}
-          entry={problem}
-          workspace={
-            workspace
-              ? {
-                  title: workspaceTitle(workspace),
-                  branch: workspace.gitRuntime?.currentBranch ?? null,
-                  age: workspace.activityAt ? ago(workspace.activityAt) : null,
-                }
-              : null
-          }
+          view={view}
+          title={workspace ? workspaceTitle(workspace) : (problem.title ?? slugOf(problem.folder))}
+          branch={workspace?.gitRuntime?.currentBranch ?? null}
+          status={workspace?.status ?? null}
+          age={workspace?.activityAt ? ago(workspace.activityAt) : null}
+          problem={problem}
+          onOpen={workspace && host ? () => onOpen({ workspaceId: workspace.id, serverId: host.serverId }) : null}
         />
       ))}
       {!host
@@ -126,30 +119,18 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
                 : null}
       {host
         ? shown.map((workspace) => (
-            <HoverPressable
+            <WorkspaceRow
               key={workspace.id}
-              accessibilityRole="link"
-              accessibilityLabel={`Open ${workspaceTitle(workspace)}`}
-              onPress={() => onOpen({ workspaceId: workspace.id, serverId: host.serverId })}
-              style={styles.row}
-              hoveredStyle={styles.hovered}
-            >
-              <View style={{ width: 14, alignItems: "center" }}>
-                <View
-                  accessibilityLabel={workspace.status.replace("_", " ")}
-                  style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: statusColor(workspace.status, theme) }}
-                />
-              </View>
-              <Text style={styles.title} numberOfLines={1}>
-                {workspaceTitle(workspace)}
-              </Text>
-              {workspace.gitRuntime?.currentBranch ? (
-                <Text style={styles.branch} numberOfLines={1}>
-                  {workspace.gitRuntime.currentBranch}
-                </Text>
-              ) : null}
-              {workspace.activityAt ? <Text style={styles.time}>{ago(workspace.activityAt)}</Text> : null}
-            </HoverPressable>
+              theme={theme}
+              layout={layout}
+              view={view}
+              title={workspaceTitle(workspace)}
+              branch={workspace.gitRuntime?.currentBranch ?? null}
+              status={workspace.status}
+              age={workspace.activityAt ? ago(workspace.activityAt) : null}
+              problem={null}
+              onOpen={() => onOpen({ workspaceId: workspace.id, serverId: host.serverId })}
+            />
           ))
         : null}
       {entries.length > SHOWN ? (
@@ -165,6 +146,83 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
         ? note(`${elsewhere} ${elsewhere === 1 ? "workspace" : "workspaces"} from other projects on ${host?.label ?? "this host"} not shown.`)
         : null}
     </View>
+  );
+}
+
+// A workspace as a link: its title is underlined, and on hover an arrow takes the branch's place.
+// A worktree problem adds its button, whose hover leaves the link alone.
+export function WorkspaceRow({
+  theme,
+  layout,
+  view,
+  title,
+  branch,
+  status,
+  age,
+  problem,
+  onOpen,
+}: {
+  theme: Theme;
+  layout: PluginHostProps["layout"];
+  view: ContainerView;
+  title: string;
+  branch: string | null;
+  status: string | null;
+  age: string | null;
+  problem: GuardWorktree | null;
+  onOpen: (() => void) | null;
+}) {
+  const [rowHovered, setRowHovered] = useState(false);
+  const [buttonHovered, setButtonHovered] = useState(false);
+  const linkHover = rowHovered && !buttonHovered && onOpen !== null;
+  return (
+    <Pressable
+      accessibilityRole={onOpen ? "link" : undefined}
+      accessibilityLabel={onOpen ? `Open ${title}` : undefined}
+      disabled={!onOpen}
+      onPress={onOpen ?? undefined}
+      onHoverIn={() => setRowHovered(true)}
+      onHoverOut={() => setRowHovered(false)}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+        minHeight: layout.compact ? 36 : 28,
+        paddingHorizontal: 8,
+        borderRadius: 6,
+        backgroundColor: linkHover ? theme.colors.surface2 : "transparent",
+      }}
+    >
+      <View style={{ width: 14, alignItems: "center" }}>
+        <View
+          accessibilityLabel={status ? status.replace("_", " ") : undefined}
+          style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: statusColor(status ?? "", theme) }}
+        />
+      </View>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: "row", alignItems: "center", gap: 6 }}>
+        <Text
+          style={{
+            color: theme.colors.foreground,
+            fontSize: 13,
+            flexShrink: 1,
+            textDecorationLine: onOpen ? "underline" : "none",
+            textDecorationColor: linkHover ? theme.colors.foreground : `${theme.colors.foreground}44`,
+          }}
+          numberOfLines={1}
+        >
+          {title}
+        </Text>
+        {linkHover ? (
+          <Icon name="ArrowUpRight" size={12} color={theme.colors.foreground} />
+        ) : branch ? (
+          <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontFamily: "monospace", flexShrink: 2 }} numberOfLines={1}>
+            {branch}
+          </Text>
+        ) : null}
+      </View>
+      {problem ? <ProblemButton theme={theme} container={view.container} entry={problem} title={title} onHover={setButtonHovered} /> : null}
+      {age ? <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, opacity: 0.75, minWidth: 24, textAlign: "right" }}>{age}</Text> : null}
+    </Pressable>
   );
 }
 

@@ -199,7 +199,8 @@ export class WorktreeGuard {
     const state = this.state(target);
     const entry = state.report?.worktrees.find((candidate) => candidate.name === name && candidate.fix?.kind === "recreate");
     if (!entry) throw new Error(`${name} has no record to recreate; check again`);
-    if (!branch || !state.status.worktrees.find((candidate) => candidate.name === name)?.branches.includes(branch)) {
+    const offered = state.status.worktrees.find((candidate) => candidate.name === name)?.branches ?? [];
+    if (!branch || !offered.some((candidate) => candidate.name === branch)) {
       throw new Error(`Pick one of the branches offered for ${name}`);
     }
     return entry;
@@ -355,7 +356,7 @@ export class WorktreeGuard {
     state.report = report;
     const order = { broken: 0, "at-risk": 1, safe: 2 } as const;
     const worktrees = [...report.worktrees].sort((a, b) => order[a.state] - order[b.state]);
-    const branches = new Map<string, string[]>();
+    const branches = new Map<string, Guard["worktrees"][number]["branches"]>();
     for (const entry of worktrees) {
       if (entry.fix?.kind === "recreate") branches.set(entry.name, await branchCandidates(config, entry.folder));
     }
@@ -385,7 +386,7 @@ export class WorktreeGuard {
 function fixLabel(
   entry: WorktreeReport,
   ops: Partial<Record<Side, FolderOps>>,
-  branches: string[],
+  branches: unknown[],
 ): Guard["worktrees"][number]["fix"] {
   if (!entry.fix || !entry.reachable.some(({ side }) => ops[side])) return null;
   if (entry.fix.kind === "share") return "share";
@@ -396,14 +397,25 @@ function fixLabel(
 // Branches a record-less worktree was likely on: Paseo names a worktree's branch after its folder
 // and may rename it later, so a branch at the same commit as the folder's name comes first.
 // Branches checked out elsewhere are left out.
-async function branchCandidates(config: GuardConfig, folder: string): Promise<string[]> {
+async function branchCandidates(config: GuardConfig, folder: string): Promise<Guard["worktrees"][number]["branches"]> {
   const common = join(config.hostRepo, ".git");
-  let refs: [string, string][];
+  let refs: [string, string, string, string][];
   try {
-    refs = (await runGit(["--git-dir", common, "for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads"]))
+    refs = (
+      await runGit([
+        "--git-dir",
+        common,
+        "for-each-ref",
+        "--format=%(refname:short)%09%(objectname)%09%(committerdate:iso-strict)%09%(contents:subject)",
+        "refs/heads",
+      ])
+    )
       .split("\n")
       .filter(Boolean)
-      .map((line) => line.split("\t") as [string, string]);
+      .map((line) => {
+        const [name = "", tip = "", date = "", ...subject] = line.split("\t");
+        return [name, tip, date, subject.join("\t")];
+      });
   } catch {
     return [];
   }
@@ -417,7 +429,13 @@ async function branchCandidates(config: GuardConfig, folder: string): Promise<st
   const slugTip = refs.find(([name]) => name === slug)?.[1];
   if (!slugTip) return [];
   const renamed = refs.filter(([name, tip]) => name !== slug && tip === slugTip).map(([name]) => name);
-  return [...renamed, slug].filter((name) => !checkedOut.has(name)).slice(0, 5);
+  return [...renamed, slug]
+    .filter((name) => !checkedOut.has(name))
+    .slice(0, 5)
+    .map((name) => {
+      const ref = refs.find(([candidate]) => candidate === name);
+      return { name, date: ref?.[2] ?? "", subject: ref?.[3] ?? "" };
+    });
 }
 
 function listRecordDirs(common: string): string[] {
