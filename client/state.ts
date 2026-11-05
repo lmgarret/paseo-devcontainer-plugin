@@ -311,9 +311,11 @@ export function useRestoreWorktrees() {
 
 export type GuardTone = "danger" | "warning" | "success";
 
-// The row's worktree badge: broken, at risk, and repaired in the last day, coloured by the most
-// urgent.
-export function guardBadge(guard: Guard | null): { text: string; tone: GuardTone } | null {
+// The row's worktree badge: counts of broken, at risk, and repaired in the last day, coloured by
+// the most urgent; `text` is for screen readers.
+export function guardBadge(
+  guard: Guard | null,
+): { broken: number; atRisk: number; restored: number; text: string; tone: GuardTone } | null {
   if (!guard) return null;
   const broken = guard.worktrees.filter((entry) => entry.state === "broken").length;
   const atRisk = guard.worktrees.filter((entry) => entry.state === "at-risk").length;
@@ -324,7 +326,8 @@ export function guardBadge(guard: Guard | null): { text: string; tone: GuardTone
     restored > 0 ? `${restored} restored` : null,
   ].filter(Boolean);
   if (parts.length === 0) return null;
-  return { text: parts.join(" · "), tone: broken > 0 ? "danger" : atRisk > 0 ? "warning" : "success" };
+  const tone: GuardTone = broken > 0 ? "danger" : atRisk > 0 ? "warning" : "success";
+  return { broken, atRisk, restored, text: parts.join(", "), tone };
 }
 
 export function toneColor(tone: GuardTone, theme: PluginTheme): string {

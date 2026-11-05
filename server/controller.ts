@@ -71,7 +71,9 @@ export class DevcontainerController {
   // Last server ID a daemon reported per repository, for when the container is stopped.
   private readonly knownServerIds = new Map<string, string>();
   private readonly forwarder = new PortForwarder();
-  private readonly guard = new WorktreeGuard(() => this.catalog.workspaces.map((workspace) => workspace.directory));
+  private readonly guard = new WorktreeGuard(() =>
+    this.catalog.workspaces.map((workspace) => ({ folder: workspace.directory, title: workspace.title })),
+  );
   private notices: Notice[] = [];
   private nextJobId = 1;
   private catalog: PaseoCatalog = { projects: [], workspaces: [] };

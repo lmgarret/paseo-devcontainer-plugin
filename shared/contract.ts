@@ -117,9 +117,15 @@ export type Forward = z.infer<typeof forwardSchema>;
 
 export const GUARD_DOCS_URL = "https://github.com/lmgarret/paseo-devcontainer-plugin/blob/main/docs/worktrees.md";
 
+const sideStateSchema = z.enum(["works", "fails", "at-risk", "unseen"]);
+
 const guardWorktreeSchema = z.object({
   name: z.string(),
   folder: z.string(),
+  // The Paseo workspace's title on either side, when the folder is one.
+  title: z.string().nullable(),
+  // Git works, fails, or a prune there would delete its record; null when that side was not checked.
+  sides: z.object({ host: sideStateSchema.nullable(), container: sideStateSchema.nullable() }),
   state: z.enum(["safe", "at-risk", "broken"]),
   problem: z.string().nullable(),
   // What can repair it: Restore from its snapshot, Make safe by naming it with a path both sides
@@ -135,6 +141,7 @@ const guardRestoreSchema = z.object({
   side: z.enum(["host", "container"]),
   trigger: z.string(),
   folder: z.string(),
+  title: z.string().nullable(),
   error: z.string().nullable(),
 });
 
@@ -145,7 +152,7 @@ const guardSchema = z.object({
   containerChecked: z.boolean(),
   error: z.string().nullable(),
   safe: z.number(),
-  // At-risk and broken worktrees only.
+  // Every worktree, safe ones included, problems first.
   worktrees: z.array(guardWorktreeSchema),
   // Repairs of the last day, newest first.
   restored: z.array(guardRestoreSchema),

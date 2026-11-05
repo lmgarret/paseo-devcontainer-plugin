@@ -144,8 +144,8 @@ interface CheckOptions {
 export class WorktreeGuard {
   private readonly repos = new Map<string, RepoState>();
 
-  // Folders of this machine's live Paseo workspaces.
-  constructor(private readonly hostWorkspaces: () => string[]) {}
+  // This machine's live Paseo workspaces.
+  constructor(private readonly hostWorkspaces: () => LiveWorkspace[]) {}
 
   // The row's last result; starts a check when it is stale. Never waits for one.
   status(target: GuardTarget, docker: string | null): Guard {
@@ -275,14 +275,17 @@ export class WorktreeGuard {
     let error: string | null = null;
     writeGuardConfig(config);
     // Live workspaces of both daemons, so a folder whose record is gone shows up.
-    const live = [...this.hostWorkspaces()];
+    const workspaces = [...this.hostWorkspaces()];
     if (target.container.running) {
       try {
-        live.push(...(await containerWorkspaces(docker, target)));
+        workspaces.push(...(await containerWorkspaces(docker, target)));
       } catch (listError) {
         error = `Could not list the container's workspaces: ${errorText(listError)}`;
       }
     }
+    const live = workspaces.map((workspace) => workspace.folder);
+    const titles = new Map(workspaces.filter((workspace) => workspace.title).map((workspace) => [workspace.folder, workspace.title]));
+    const titleOf = (folder: string) => titles.get(translate(config, folder, "host")) ?? null;
     const inspect = async (): Promise<GuardReport> => {
       const request = probeRequest(config, "host", live);
       const views: { host: ReturnType<typeof localView>; container?: ReturnType<typeof parseProbe> } = {
@@ -304,7 +307,7 @@ export class WorktreeGuard {
     const results: FixResult[] = [];
     const record = (side: Side, trigger: string, fixed: FixResult[], at = Date.now()) => {
       for (const result of fixed) {
-        state.restores.unshift({ at, side, trigger, folder: result.folder, error: result.error });
+        state.restores.unshift({ at, side, trigger, folder: result.folder, title: titleOf(result.folder), error: result.error });
         if (side !== "host") continue;
         if (result.error) console.error(`[devcontainer-host] could not repair worktree ${result.folder}: ${result.error}`);
         else console.log(`[devcontainer-host] repaired worktree ${result.folder} (${trigger})`);
@@ -350,7 +353,8 @@ export class WorktreeGuard {
 
     state.restores = recent(state.restores);
     state.report = report;
-    const worktrees = report.worktrees.filter((entry) => entry.state !== "safe");
+    const order = { broken: 0, "at-risk": 1, safe: 2 } as const;
+    const worktrees = [...report.worktrees].sort((a, b) => order[a.state] - order[b.state]);
     const branches = new Map<string, string[]>();
     for (const entry of worktrees) {
       if (entry.fix?.kind === "recreate") branches.set(entry.name, await branchCandidates(config, entry.folder));
@@ -359,10 +363,12 @@ export class WorktreeGuard {
       checkedAt: report.checkedAt,
       containerChecked: report.sides.includes("container"),
       error,
-      safe: report.worktrees.length - worktrees.length,
+      safe: worktrees.filter((entry) => entry.state === "safe").length,
       worktrees: worktrees.map((entry) => ({
         name: entry.name,
         folder: entry.folder,
+        title: titleOf(entry.folder),
+        sides: { host: entry.sides.host ?? null, container: entry.sides.container ?? null },
         state: entry.state,
         problem: entry.problem,
         fix: fixLabel(entry, ops, branches.get(entry.name) ?? []),
@@ -428,16 +434,24 @@ function runGit(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<s
   });
 }
 
-// The container daemon's workspace folders, as this machine sees them.
-async function containerWorkspaces(docker: string, target: GuardTarget): Promise<string[]> {
+export interface LiveWorkspace {
+  // As this machine sees it.
+  folder: string;
+  title: string;
+}
+
+// The container daemon's workspaces, with folders as this machine sees them.
+async function containerWorkspaces(docker: string, target: GuardTarget): Promise<LiveWorkspace[]> {
   const result = await run(
     docker,
     ["exec", "-u", target.container.remoteUser, target.container.id, "bash", "-lc", "paseo workspace ls --json"],
     { env: toolEnv([docker]), timeoutMs: EXEC_TIMEOUT_MS },
   );
   if (result.code !== 0) throw new Error(result.stderr.trim().split("\n").pop() || `exit ${result.code}`);
-  const entries = JSON.parse(result.stdout || "[]") as { cwd?: string }[];
-  return entries.flatMap((entry) => (entry.cwd ? [translate(target.config, entry.cwd, "host")] : []));
+  const entries = JSON.parse(result.stdout || "[]") as { cwd?: string; name?: string }[];
+  return entries.flatMap((entry) =>
+    entry.cwd ? [{ folder: translate(target.config, entry.cwd, "host"), title: entry.name ?? "" }] : [],
+  );
 }
 
 function recent(restores: Guard["restored"]): Guard["restored"] {
