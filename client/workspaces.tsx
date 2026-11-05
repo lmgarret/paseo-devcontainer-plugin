@@ -149,7 +149,7 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
   );
 }
 
-// A workspace as a link: its title is underlined, and on hover an arrow takes the branch's place.
+// A workspace as a link: on hover its title is underlined and an arrow takes the branch's place.
 // A worktree problem adds its button, whose hover leaves the link alone.
 export function WorkspaceRow({
   theme,
@@ -205,8 +205,7 @@ export function WorkspaceRow({
             color: theme.colors.foreground,
             fontSize: 13,
             flexShrink: 1,
-            textDecorationLine: onOpen ? "underline" : "none",
-            textDecorationColor: linkHover ? theme.colors.foreground : `${theme.colors.foreground}44`,
+            textDecorationLine: linkHover ? "underline" : "none",
           }}
           numberOfLines={1}
         >
