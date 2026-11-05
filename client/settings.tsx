@@ -104,6 +104,22 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
           {current.persistPaseoHome
             ? input("paseoHomesDir", "Paseo homes folder", "One subfolder per repository.", "~/.paseo/plugin-data/devcontainer-host/homes")
             : null}
+          <SettingsSwitch
+            label="Mirror this machine's plugins"
+            hint="Install the plugins enabled here in each container's daemon, whenever it starts and whenever you add one here. Plugins installed from a folder are skipped, and removing one here leaves containers alone."
+            value={current.mirrorHostPlugins}
+            disabled={settings.saving}
+            onValueChange={(mirrorHostPlugins) => void save({ mirrorHostPlugins })}
+          />
+          {current.mirrorHostPlugins ? (
+            <SettingsInput
+              key={`mirrorExcluded-${revision}`}
+              label="Plugins not to mirror"
+              placeholder="plugin-id, …"
+              initialValue={values.mirrorExcludedPlugins.join(", ")}
+              onChangeText={(text) => setDraft((previous) => ({ ...previous, mirrorExcludedPlugins: splitPaths(text) }))}
+            />
+          ) : null}
         </SettingsCard>
       </SettingsSection>
 

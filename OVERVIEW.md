@@ -44,6 +44,7 @@ Settings:
 
 - Discovery: scan Paseo projects for dev container configs, and add other repositories.
 - Paseo in containers: the command that installs the Paseo CLI (`@getpaseo/cli` from the npm registry by default), run as the container's remote user, and whether Start and Rebuild run it when Paseo is missing. This is on by default. When it is off, Start and Rebuild still succeed and the container offers Install Paseo.
+- Plugins: install this machine's enabled plugins in each container's daemon, except those you exclude. On by default. See below.
 - Paseo home: keep each container's Paseo home in a folder on this machine, `~/.paseo/plugin-data/devcontainer-host/homes/<repository>` by default. See below. On by default; applies to containers created afterwards.
 - Guard shared worktrees: check and repair the git worktrees this machine and a container share. See below. On by default.
 - Builds: whether rebuilds open their log in a terminal. On by default.
@@ -65,11 +66,20 @@ The repository itself still has a different path on each side, and worktrees cre
 
 - in the container, it links the repository's path on this machine to its folder, so a `git worktree repair` here does not break the container's worktrees;
 - it snapshots every worktree's git record, and shows on the container's row how many are at risk, broken, or were restored, with each worktree's problem on its card;
-- after an archive on this machine it puts back the records Paseo's prune deleted for other worktrees, and a small companion plugin it installs in the container's Paseo daemon does the same after archives there. The archived worktree stays gone;
+- after an archive on this machine it puts back the records Paseo's prune deleted for other worktrees, and the companion plugin it installs in the container's Paseo daemon does the same after archives there. The archived worktree stays gone;
 - the card's Restore button repairs what a `git worktree prune` or `repair` run by hand broke;
 - creating a workspace on this machine for a repository that also runs in a container shows a warning once.
 
 [Worktrees shared with a dev container](https://github.com/lmgarret/paseo-devcontainer-plugin/blob/main/docs/worktrees.md) explains what can go wrong, what the plugin cannot catch, and how to recover by hand. The same guide opens in Paseo from a container's card, the plugin's settings, or the Command Center.
+
+## Plugins in containers
+
+The plugins enabled on this machine are installed in each container's Paseo daemon, under the same ID, when it lacks them. When the container's Paseo home is kept on this machine, the plugin writes the list there and its companion plugin in the container installs them whenever that daemon runs, even when it was started from VS Code or a shell. Other containers get them from this machine when Paseo starts their daemon, or finds it running. This machine's plugins are checked every 15 seconds, so a plugin added here reaches running containers without a restart. Mirroring only adds plugins:
+
+- plugins from the Paseo registry install the registry's reviewed revision; other Git and npm plugins install the commit or version this machine runs;
+- plugins installed from a folder on this machine, disabled plugins, and this plugin itself are skipped;
+- removing or disabling a plugin here leaves containers alone, and plugin settings are not copied;
+- a failed install is logged, in the companion's plugin logs when it installs, and does not fail the job. It is retried when the daemon restarts, or on the next change to this machine's plugins.
 
 ## Limits
 

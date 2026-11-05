@@ -1,9 +1,9 @@
 /// <reference types="node" />
 // This machine's side of the worktree guard (see worktree-guard.ts): checks a repository's
 // worktrees from here and, through `docker exec`, from its container; repairs after archives and
-// on request; and installs the companion plugin that does the same after the container's own
+// on request. The companion plugin (companion-host.ts) does the same after the container's own
 // archives.
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { DevcontainerSettings, Guard } from "../shared/contract";
@@ -36,11 +36,10 @@ import {
   writeRecordCommand,
 } from "./worktree-guard";
 import type { DockerContainer } from "./discovery";
-import { homeOwner, homesRoot, readConfig, shellQuote, writeConfig } from "./paseo-home";
-import { pluginDir } from "./plugin-dir";
+import { companionState, managedHome, readText, writeAtomic } from "./companion-host";
+import { shellQuote } from "./paseo-home";
 import { run, toolEnv } from "./process";
 
-export const COMPANION_ID = "devcontainer-guard";
 // Row refreshes check at most this often; archives and Restore check right away.
 const CHECK_INTERVAL_MS = 15_000;
 const HISTORY_MS = 24 * 60 * 60_000;
@@ -49,7 +48,6 @@ const EXEC_TIMEOUT_MS = 30_000;
 const ARCHIVE_WINDOW_MS = 5 * 60_000;
 const FOLLOW_UP_MS = 15_000;
 
-type Log = (line: string) => void;
 
 export interface GuardTarget {
   repoPath: string;
@@ -64,13 +62,10 @@ export function guardTarget(
   repoPath: string,
   container: DockerContainer | null,
 ): GuardTarget | null {
-  if (!settings.guardWorktrees || !settings.persistPaseoHome) return null;
-  const home = container?.paseoHome.home;
+  if (!settings.guardWorktrees) return null;
+  const home = managedHome(settings, repoPath, container);
   if (!container || !home || !container.workspaceFolder) return null;
   try {
-    // Homes of another plugin instance or an earlier homes folder are left alone.
-    if (dirname(home) !== realpathSync(homesRoot(settings))) return null;
-    if (homeOwner(home) !== repoPath) return null;
     const hostRepo = realpathSync(repoPath);
     // A linked worktree or a submodule has a .git file; only main checkouts own worktree records.
     if (!statSync(join(hostRepo, ".git")).isDirectory()) return null;
@@ -507,7 +502,7 @@ function containerOps(docker: string, target: GuardTarget): FolderOps {
   };
 }
 
-function writeGuardConfig(config: GuardConfig): void {
+export function writeGuardConfig(config: GuardConfig): void {
   const file = join(config.guardDir, GUARD_CONFIG);
   const content = `${JSON.stringify(
     { hostRepo: config.hostRepo, containerRepo: config.containerRepo, mounts: config.mounts ?? [] },
@@ -517,87 +512,4 @@ function writeGuardConfig(config: GuardConfig): void {
   if (readText(file) === content) return;
   mkdirSync(config.guardDir, { recursive: true });
   writeAtomic(file, content);
-}
-
-function readText(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return null;
-  }
-}
-
-function writeAtomic(path: string, content: string): void {
-  mkdirSync(dirname(path), { recursive: true });
-  // Same directory, so the rename stays on one filesystem.
-  const temp = `${path}.${process.pid}.tmp`;
-  writeFileSync(temp, content);
-  renameSync(temp, path);
-}
-
-function companionDir(home: string): string {
-  return join(home, "plugins", COMPANION_ID);
-}
-
-function companionFiles(source: string): Record<string, string> {
-  const read = (path: string) => readFileSync(join(source, path), "utf8");
-  return {
-    "paseo-plugin.json": `${JSON.stringify(
-      {
-        id: COMPANION_ID,
-        name: "Dev container worktree guard",
-        description: "Restores git worktree records that an archive in this container deletes for the host's worktrees.",
-        requirements: { paseo: ">=0.15.0" },
-      },
-      null,
-      2,
-    )}\n`,
-    "index.server.ts": 'export { default } from "./server/companion";\n',
-    "server/companion.ts": read("server/companion.ts"),
-    "server/worktree-guard.ts": read("server/worktree-guard.ts"),
-  };
-}
-
-function companionState(home: string): Guard["companion"] {
-  const entry = readConfig(home)?.plugins?.[COMPANION_ID];
-  if (!existsSync(join(companionDir(home), "index.server.ts"))) return "off";
-  if (!entry) return "pending";
-  return entry.enabled === false ? "off" : "installed";
-}
-
-export interface CompanionInstall {
-  // Files differ from what the daemon last loaded.
-  changed: boolean;
-  // Registered in the daemon's config; false when the daemon runs and could not be told.
-  registered: boolean;
-}
-
-// Copies the companion into the container's Paseo home, which the container sees at the same
-// path, and registers it in that daemon's config. The config is only edited while the daemon is
-// stopped, since a running daemon owns it. A copy that the user disabled stays disabled.
-export function installCompanion(target: GuardTarget, daemonRunning: boolean, log: Log): CompanionInstall | null {
-  const source = pluginDir();
-  if (!source) {
-    log("Worktree guard: could not find this plugin's folder; the container's companion plugin is not installed.");
-    return null;
-  }
-  writeGuardConfig(target.config);
-  const dir = companionDir(target.home);
-  let changed = false;
-  for (const [path, content] of Object.entries(companionFiles(source))) {
-    const file = join(dir, path);
-    if (readText(file) === content) continue;
-    writeAtomic(file, content);
-    changed = true;
-  }
-  const config = readConfig(target.home) ?? { version: 1 };
-  const entry = config.plugins?.[COMPANION_ID];
-  if (entry && entry.path === dir && config.pluginsEnabled === true) return { changed, registered: true };
-  if (entry?.enabled === false) return { changed, registered: true };
-  if (daemonRunning) return { changed, registered: false };
-  config.pluginsEnabled = true;
-  config.plugins = { ...config.plugins, [COMPANION_ID]: { source: "directory", path: dir, enabled: true } };
-  writeConfig(target.home, config);
-  log(`Worktree guard: installed the ${COMPANION_ID} plugin in the container's Paseo daemon.`);
-  return { changed, registered: true };
 }

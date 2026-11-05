@@ -100,11 +100,11 @@ flowchart TD
 | Repository link | In the container, as root, links this machine's repository path to its folder there | Every daemon start and check; lost on rebuild |
 | Snapshots | Copies working records to `<container home>/devcontainer-guard/snapshots`, kept until both sides confirm the folder is gone | Every check |
 | Checks | Sorts worktrees into safe, at risk, and broken | Every 15 seconds while the app is open, every minute otherwise |
-| Companion plugin | `devcontainer-guard`, in the container's Paseo daemon, repairs after archives there | Installed before the daemon starts |
+| Companion plugin | `devcontainer-companion`, in the container's Paseo daemon, repairs after archives there | Installed before the daemon starts |
 | Warning | Shown once when you create a workspace here for a repository that also runs in a container | Workspace creation |
 
 > [!NOTE]
-> - The companion plugin needs Paseo 0.15 or later in the container. Installing it sets `pluginsEnabled` in that daemon's config, which also starts any other plugin configured there, and skips the trust prompt. If you disable it with `paseo plugin disable devcontainer-guard`, it stays disabled.
+> - The companion plugin needs Paseo 0.15 or later in the container. Installing it sets `pluginsEnabled` in that daemon's config, which also starts any other plugin configured there, and skips the trust prompt. If you disable it with `paseo plugin disable devcontainer-companion`, it stays disabled, and so does its plugin mirroring. Containers that ran the earlier `devcontainer-guard` companion switch to it the next time their daemon is stopped and started from Paseo.
 > - With Docker Desktop, the container can see this machine's changes to `.git` late. If git fails in the container right after a change here, try again a few seconds later.
 > - Turn the guard off with **Guard shared worktrees** under **Shared worktrees** in the plugin's settings.
 
