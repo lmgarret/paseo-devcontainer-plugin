@@ -83,7 +83,12 @@ export interface WorktreeReport {
   reachable: { side: Side; folder: string }[];
   // The folder's `.git` pointer, preferring one that opens; null when no side reads it.
   pointer: string | null;
+  // How each checked side fares: git works, git fails, a prune there would delete the record,
+  // or the side does not see the folder.
+  sides: Partial<Record<Side, SideState>>;
 }
+
+export type SideState = "works" | "fails" | "at-risk" | "unseen";
 
 export interface GuardReport {
   checkedAt: number;
@@ -334,6 +339,16 @@ export function classify(
   const same = (a: string | null | undefined, b: string | null | undefined) =>
     !!a && !!b && translate(config, a, "host") === translate(config, b, "host");
 
+  const sideStates = (seen: Seen[], recordOk: boolean, atRisk?: Side): WorktreeReport["sides"] => {
+    const states: WorktreeReport["sides"] = {};
+    for (const side of sides) {
+      const entry = seen.find((candidate) => candidate.side === side);
+      states[side] =
+        side === atRisk ? "at-risk" : !entry ? "unseen" : recordOk && resolvesOn(side, entry.pointer) ? "works" : "fails";
+    }
+    return states;
+  };
+
   const worktrees: WorktreeReport[] = [];
   for (const name of new Set([...records.keys(), ...snapshots.keys()])) {
     const record = records.get(name) ?? null;
@@ -341,7 +356,13 @@ export function classify(
     const gitFile = record?.gitFile ?? snapshot?.gitFile;
     if (!gitFile) continue;
     const folder = dirname(gitFile);
-    const report = (state: WorktreeState, problem: string | null, fix: Fix | null, seen: Seen[]): void => {
+    const report = (
+      state: WorktreeState,
+      problem: string | null,
+      fix: Fix | null,
+      seen: Seen[],
+      atRisk?: Side,
+    ): void => {
       const pointer = seen.find((entry) => resolvesOn(entry.side, entry.pointer))?.pointer ?? seen[0]?.pointer ?? null;
       worktrees.push({
         name,
@@ -351,6 +372,7 @@ export function classify(
         fix,
         reachable: seen.map(({ side, folder }) => ({ side, folder })),
         pointer,
+        sides: sideStates(seen, true, atRisk),
       });
     };
 
@@ -369,6 +391,7 @@ export function classify(
             fix: { kind: "record" },
             reachable: seen.map(({ side, folder }) => ({ side, folder })),
             pointer: seen[0]?.pointer ?? null,
+            sides: sideStates(seen, false),
           });
         } else {
           worktrees.push({
@@ -379,6 +402,7 @@ export function classify(
             fix: { kind: "rename" },
             reachable: seen.map(({ side, folder }) => ({ side, folder })),
             pointer: seen[0]?.pointer ?? null,
+            sides: sideStates(seen, false),
           });
         }
       }
@@ -433,6 +457,7 @@ export function classify(
           `Only ${SIDE_LABEL[only]} sees ${folder}, so a git worktree prune in ${SIDE_LABEL[other]} deletes its record.`,
           shared ? { kind: "share", gitFile: shared } : null,
           seen,
+          other,
         );
         continue;
       }
@@ -459,6 +484,7 @@ export function classify(
       fix: { kind: "recreate", rename: !!record },
       reachable: seen.map(({ side, folder: reached }) => ({ side, folder: reached })),
       pointer: seen[0]?.pointer ?? null,
+      sides: sideStates(seen, false),
     });
   }
   worktrees.sort((a, b) => a.folder.localeCompare(b.folder));

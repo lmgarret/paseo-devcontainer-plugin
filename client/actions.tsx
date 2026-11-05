@@ -344,15 +344,35 @@ export function ContainerRow({
 function GuardPill({ theme, view, popover }: { theme: PluginHostProps["theme"]; view: ContainerView; popover: boolean }) {
   const badge = guardBadge(view.container.guard);
   if (!badge || (popover && badge.tone !== "danger")) return null;
-  const color = toneColor(badge.tone, theme);
+  const counts: [number, string][] = [
+    [badge.broken, theme.colors.statusDanger],
+    [badge.atRisk, theme.colors.statusWarning],
+  ];
+  // Repairs only show while nothing needs attention.
+  if (badge.broken === 0 && badge.atRisk === 0) counts.push([badge.restored, theme.colors.statusSuccess]);
   return (
     <View
       accessibilityLabel={`Worktrees: ${badge.text}`}
-      style={{ paddingHorizontal: 7, paddingVertical: 1, borderRadius: 10, borderWidth: 1, borderColor: color, flexShrink: 0 }}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 5,
+        paddingHorizontal: 7,
+        paddingVertical: 1,
+        borderRadius: 10,
+        borderWidth: 1,
+        borderColor: theme.colors.border,
+        flexShrink: 0,
+      }}
     >
-      <Text style={{ color, fontSize: 11 }} numberOfLines={1}>
-        {`worktrees ${badge.text}`}
-      </Text>
+      <Icon name={badge.broken + badge.atRisk > 0 ? "GitBranch" : "Undo2"} size={12} color={toneColor(badge.tone, theme)} />
+      {counts
+        .filter(([count]) => count > 0)
+        .map(([count, color]) => (
+          <Text key={color} style={{ color, fontSize: 11, fontVariant: ["tabular-nums"] }}>
+            {count}
+          </Text>
+        ))}
     </View>
   );
 }
