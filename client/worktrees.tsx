@@ -4,10 +4,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Guard, GuardWorktree } from "../shared/contract";
-import { IconButton } from "./actions";
+import { IconButton, WithTooltip } from "./actions";
 import { openGuide } from "./guide";
 import { HoverPressable } from "./hover";
-import { STATUS_KEY, useGuardPreview, useRestoreWorktrees } from "./state";
+import { STATUS_KEY, useGuardPreview, useRestoreWorktrees, useStatusQuery } from "./state";
 
 type Theme = PluginHostProps["theme"];
 
@@ -20,6 +20,13 @@ export interface ProblemWorkspace {
   branch: string | null;
   // "12m", "5d"; null when unknown.
   age: string | null;
+}
+
+// The machine this plugin runs on, named as its daemon reports it rather than assumed to be a Mac.
+function useMachine(): { name: string; icon: string } {
+  const machine = useStatusQuery().data?.machine;
+  const icon = machine?.platform === "darwin" ? "Laptop" : machine?.platform === "win32" ? "Monitor" : "Server";
+  return { name: machine?.name ?? "This machine", icon };
 }
 
 export function worktreeProblems(guard: Guard | null): GuardWorktree[] {
@@ -69,6 +76,7 @@ interface ProblemRowProps extends Pick<PluginHostProps, "theme" | "layout"> {
 // sides, one sentence, and the choice when opened.
 export function WorktreeProblemRow({ theme, layout, repoPath, entry, workspace }: ProblemRowProps) {
   const [open, setOpen] = useState(false);
+  const machine = useMachine();
   const broken = entry.state === "broken";
   const tone = broken ? theme.colors.statusDanger : theme.colors.statusWarning;
   const verb =
@@ -101,10 +109,21 @@ export function WorktreeProblemRow({ theme, layout, repoPath, entry, workspace }
         <Text style={{ color: theme.colors.foregroundMuted, fontSize: 11, fontFamily: MONO, flex: 1 }} numberOfLines={1}>
           {workspace?.branch ?? ""}
         </Text>
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
-          <Icon name={broken ? "Unlink" : "TriangleAlert"} size={12} color={tone} />
-          {layout.compact ? null : <Text style={{ color: tone, fontSize: 12 }}>{broken ? "Git broken" : "At risk"}</Text>}
-        </View>
+        <WithTooltip
+          theme={theme}
+          align="right"
+          onPress={() => setOpen((value) => !value)}
+          text={
+            broken
+              ? "Git commands fail in this workspace: its worktree record is missing or points to the wrong place."
+              : `Git works for now, but a git worktree prune on ${riskSide(entry, machine.name)} would delete its record.`
+          }
+        >
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+            <Icon name={broken ? "Unlink" : "TriangleAlert"} size={12} color={tone} />
+            {layout.compact ? null : <Text style={{ color: tone, fontSize: 12 }}>{broken ? "Git broken" : "At risk"}</Text>}
+          </View>
+        </WithTooltip>
         {verb && !open ? (
           <View
             style={{
@@ -151,6 +170,7 @@ function ProblemDetail({
   const repair = useRestoreWorktrees();
   const [busy, setBusy] = useState(false);
   const [branch, setBranch] = useState(entry.branches[0] ?? "");
+  const machine = useMachine();
 
   const run = async () => {
     setBusy(true);
@@ -170,22 +190,14 @@ function ProblemDetail({
   return (
     <View style={{ paddingLeft: 32, paddingRight: 12, paddingTop: 4, gap: 12 }}>
       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-        <SideChip theme={theme} icon="Laptop" label="This Mac" state={entry.sides.host} />
-        <SideChip theme={theme} icon="Box" label="Container" state={entry.sides.container} />
+        <SideChip theme={theme} icon={machine.icon} label={machine.name} side="host" state={entry.sides.host} />
+        <SideChip theme={theme} icon="Box" label="Container" side="container" state={entry.sides.container} />
       </View>
-      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>{sentence(entry)}</Text>
+      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 13 }}>{sentence(entry, machine.name)}</Text>
       {entry.fix === "recreate" ? (
         <BranchChoice theme={theme} repoPath={repoPath} entry={entry} branch={branch} onBranch={setBranch} />
       ) : null}
-      {entry.fix === "share" && entry.target ? (
-        <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <Text style={{ color: theme.colors.statusDanger, fontSize: 12, fontFamily: MONO, textDecorationLine: "line-through" }}>
-            {shortPath(entry.folder)}
-          </Text>
-          <Icon name="ArrowRight" size={12} color={theme.colors.foregroundMuted} />
-          <Text style={{ color: theme.colors.foreground, fontSize: 12, fontFamily: MONO }}>{shortPath(entry.target)}</Text>
-        </View>
-      ) : null}
+      {entry.fix === "share" && entry.target ? <PathChange theme={theme} from={entry.folder} to={entry.target} /> : null}
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         {verb ? (
           <Pressable
@@ -225,40 +237,89 @@ function SideChip({
   theme,
   icon,
   label,
+  side,
   state,
 }: {
   theme: Theme;
   icon: string;
   label: string;
+  side: "host" | "container";
   state: GuardWorktree["sides"]["host"];
 }) {
+  const where = side === "host" ? `on ${label}` : "in the container";
   const meta =
     state === "works"
-      ? { icon: "Check", color: theme.colors.statusSuccess, border: theme.colors.border }
+      ? { icon: "Check", color: theme.colors.statusSuccess, border: theme.colors.border, tip: `Git works ${where}.` }
       : state === "fails"
-        ? { icon: "X", color: theme.colors.statusDanger, border: theme.colors.statusDanger }
+        ? { icon: "X", color: theme.colors.statusDanger, border: theme.colors.statusDanger, tip: `Git fails ${where}.` }
         : state === "at-risk"
-          ? { icon: "TriangleAlert", color: theme.colors.statusWarning, border: theme.colors.statusWarning }
-          : { icon: "Minus", color: theme.colors.foregroundMuted, border: theme.colors.border };
+          ? {
+              icon: "TriangleAlert",
+              color: theme.colors.statusWarning,
+              border: theme.colors.statusWarning,
+              tip: `Git works, but a git worktree prune ${where} would delete this worktree's record, since it can't see the path the record uses.`,
+            }
+          : state === "unseen"
+            ? {
+                icon: "Minus",
+                color: theme.colors.foregroundMuted,
+                border: theme.colors.border,
+                tip: `This worktree's folder isn't visible ${where}, so git isn't used there.`,
+              }
+            : {
+                icon: "Minus",
+                color: theme.colors.foregroundMuted,
+                border: theme.colors.border,
+                tip: `Not checked ${where}: the container isn't running.`,
+              };
   return (
-    <View
-      accessibilityLabel={`${label}: ${state ?? "not checked"}`}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-        borderWidth: 1,
-        borderColor: meta.border,
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-        backgroundColor: theme.colors.surface0,
-      }}
-    >
-      <Icon name={icon} size={12} color={theme.colors.foregroundMuted} />
-      <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }}>{label}</Text>
-      <Icon name={meta.icon} size={12} color={meta.color} />
-    </View>
+    <WithTooltip theme={theme} text={meta.tip}>
+      <View
+        accessibilityLabel={`${label}: ${meta.tip}`}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 8,
+          borderWidth: 1,
+          borderColor: meta.border,
+          borderRadius: 8,
+          paddingHorizontal: 10,
+          paddingVertical: 5,
+          backgroundColor: theme.colors.surface0,
+        }}
+      >
+        <Icon name={icon} size={12} color={theme.colors.foregroundMuted} />
+        <Text style={{ color: theme.colors.foregroundMuted, fontSize: 12 }} numberOfLines={1}>
+          {label}
+        </Text>
+        <Icon name={meta.icon} size={12} color={meta.color} />
+      </View>
+    </WithTooltip>
+  );
+}
+
+// The record's path before and after Make safe. They share their tail, the worktree's own folders,
+// so only the part that differs is shown; the full paths are in the tooltip.
+function PathChange({ theme, from, to }: { theme: Theme; from: string; to: string }) {
+  const a = from.split("/");
+  const b = to.split("/");
+  let shared = 0;
+  while (shared < Math.min(a.length, b.length) - 1 && a[a.length - 1 - shared] === b[b.length - 1 - shared]) shared++;
+  // The differing start, then the first shared folder, so both read as paths.
+  const show = (parts: string[]) => {
+    const head = parts.slice(0, parts.length - shared).join("/");
+    return shared > 0 ? `${head}/${parts[parts.length - shared]}${shared > 1 ? "/…" : ""}` : head;
+  };
+  return (
+    <WithTooltip theme={theme} text={`The record now names ${from}, which only the container sees. Make safe changes it to ${to}: the same folder, at a path both sides see.`}>
+      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <Text style={{ color: theme.colors.statusDanger, fontSize: 12, fontFamily: MONO, textDecorationLine: "line-through" }}>
+          {show(a)}
+        </Text>
+        <Icon name="ArrowRight" size={12} color={theme.colors.foregroundMuted} />
+        <Text style={{ color: theme.colors.foreground, fontSize: 12, fontFamily: MONO }}>{show(b)}</Text>
+      </View>
+    </WithTooltip>
   );
 }
 
@@ -348,8 +409,13 @@ function BranchChoice({
   );
 }
 
-function sentence(entry: GuardWorktree): string {
-  const side = entry.sides.host === "at-risk" ? "this Mac" : "the container";
+// Where a prune would delete an at-risk worktree's record.
+function riskSide(entry: GuardWorktree, machine: string): string {
+  return entry.sides.host === "at-risk" ? machine : "the container";
+}
+
+function sentence(entry: GuardWorktree, machine: string): string {
+  const side = riskSide(entry, machine);
   if (entry.fix === "recreate") return "Its git record was deleted before the guard could save it.";
   if (entry.fix === "share") return `Its record uses a path ${side} can't see, so a prune there would delete it.`;
   if (entry.state === "at-risk") return `Only one side sees its folder, so a prune on ${side} would delete its record.`;
@@ -361,9 +427,3 @@ function sentence(entry: GuardWorktree): string {
   return "This one can't be repaired here; the guide shows how to recover it by hand.";
 }
 
-function shortPath(path: string): string {
-  const home = /^(\/Users\/[^/]+|\/home\/[^/]+)(?=\/)/.exec(path)?.[1];
-  const short = home ? `~${path.slice(home.length)}` : path;
-  const parts = short.split("/");
-  return parts.length > 4 ? `${parts.slice(0, 2).join("/")}/…/${parts.slice(-2).join("/")}` : short;
-}

@@ -1,7 +1,7 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
 import { PortPills } from "./ports";
@@ -349,30 +349,70 @@ function GuardPill({ theme, view, popover }: { theme: PluginHostProps["theme"]; 
     [badge.broken, theme.colors.statusDanger],
     [badge.atRisk, theme.colors.statusWarning],
   ];
+  const tip = [
+    badge.broken > 0 ? `${badge.broken} ${badge.broken === 1 ? "workspace where" : "workspaces where"} git is broken` : null,
+    badge.atRisk > 0 ? `${badge.atRisk} at risk of breaking` : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   return (
-    <View
-      accessibilityLabel={`Worktrees: ${badge.text}`}
-      style={{
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 5,
-        paddingHorizontal: 7,
-        paddingVertical: 1,
-        borderRadius: 10,
-        borderWidth: 1,
-        borderColor: theme.colors.border,
-        flexShrink: 0,
-      }}
+    <WithTooltip theme={theme} text={`Git worktrees: ${tip}. ${popover ? "Open the container to fix." : "Fix them in the workspace list below."}`} align="right">
+      <View
+        accessibilityLabel={`Worktrees: ${badge.text}`}
+        style={{
+          flexDirection: "row",
+          alignItems: "center",
+          gap: 5,
+          paddingHorizontal: 7,
+          paddingVertical: 1,
+          borderRadius: 10,
+          borderWidth: 1,
+          borderColor: theme.colors.border,
+          flexShrink: 0,
+        }}
+      >
+        <Icon name="GitBranch" size={12} color={toneColor(badge.tone, theme)} />
+        {counts
+          .filter(([count]) => count > 0)
+          .map(([count, color]) => (
+            <Text key={color} style={{ color, fontSize: 11, fontVariant: ["tabular-nums"] }}>
+              {count}
+            </Text>
+          ))}
+      </View>
+    </WithTooltip>
+  );
+}
+
+// Shows `text` in a bubble below its children on hover, after the usual delay. Presses go to
+// `onPress`, so wrapping part of a pressable row keeps the row working.
+export function WithTooltip({
+  theme,
+  text,
+  children,
+  align = "left",
+  top = 22,
+  onPress,
+}: {
+  theme: PluginHostProps["theme"];
+  text: string;
+  children: ReactNode;
+  align?: "left" | "right";
+  top?: number;
+  onPress?: () => void;
+}) {
+  const tip = useTooltip(TOOLTIP_DELAY_MS);
+  return (
+    <Pressable
+      accessible={false}
+      onPress={onPress}
+      onHoverIn={tip.showLater}
+      onHoverOut={tip.hide}
+      style={{ position: "relative", zIndex: tip.shown ? 20 : 0 }}
     >
-      <Icon name="GitBranch" size={12} color={toneColor(badge.tone, theme)} />
-      {counts
-        .filter(([count]) => count > 0)
-        .map(([count, color]) => (
-          <Text key={color} style={{ color, fontSize: 11, fontVariant: ["tabular-nums"] }}>
-            {count}
-          </Text>
-        ))}
-    </View>
+      {children}
+      {tip.shown ? <TooltipBubble theme={theme} text={text} top={top} align={align} /> : null}
+    </Pressable>
   );
 }
 
@@ -445,7 +485,7 @@ function TooltipBubble({ theme, text, top, align }: { theme: PluginHostProps["th
           backgroundColor: theme.colors.surface2,
         }}
       >
-        <Text style={{ color: theme.colors.foreground, fontSize: 12 }} numberOfLines={2}>
+        <Text style={{ color: theme.colors.foreground, fontSize: 12 }} numberOfLines={4}>
           {text}
         </Text>
       </View>

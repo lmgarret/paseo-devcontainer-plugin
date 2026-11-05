@@ -216,6 +216,8 @@ const statusSchema = z.object({
   dockerError: z.string().nullable(),
   tools: z.object({ docker: z.string().nullable(), devcontainer: z.string().nullable() }),
   notices: z.array(noticeSchema),
+  // The machine this plugin's daemon runs on: its name and Node's platform, for labels and icons.
+  machine: z.object({ name: z.string(), platform: z.string() }),
 });
 export type Status = z.infer<typeof statusSchema>;
 
