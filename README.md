@@ -29,7 +29,7 @@ paseo plugin reload devcontainer-host   # after each change
 paseo plugin logs devcontainer-host
 ```
 
-Layout: `index.client.tsx` and `client/` run in the app, `index.server.ts` and `server/` run in the daemon, and `shared/` holds the RPC contracts used by both. `server/companion.ts` and `server/worktree-guard.ts` are also copied into each container's Paseo home as the `devcontainer-guard` plugin, so they use Node built-ins and type imports only. `docs/worktrees.md` is read by the daemon at runtime and shown in the app as the worktrees guide, so keep it at that path.
+Layout: `index.client.tsx` and `client/` run in the app, `index.server.ts` and `server/` run in the daemon, and `shared/` holds the RPC contracts used by both. `server/companion*.ts` and `server/worktree-guard.ts` are also copied into each container's Paseo home as the `devcontainer-companion` plugin, so they use Node built-ins and type imports only. `docs/worktrees.md` is read by the daemon at runtime and shown in the app as the worktrees guide, so keep it at that path.
 
 ## Releasing
 

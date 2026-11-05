@@ -22,6 +22,7 @@ const FORWARD_INTERVAL_MS = 3_000;
 const GUARD_INTERVAL_MS = 60_000;
 // The container's companion reports its archive repairs in a file; reading it is cheap.
 const REPORT_INTERVAL_MS = 5_000;
+const PLUGIN_SYNC_INTERVAL_MS = 15_000;
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(settingsDefinition);
@@ -102,6 +103,19 @@ export default function contribute(server: PluginServerContext) {
         .catch((error: unknown) => console.error("[devcontainer-host] worktree check after create failed:", error));
     }),
   ];
+  // Plugins added on this machine reach running container daemons within a poll.
+  let mirroring = false;
+  const syncPlugins = () => {
+    if (mirroring) return;
+    mirroring = true;
+    controller
+      .syncPlugins()
+      .catch((error: unknown) => console.error("[devcontainer-host] plugin mirroring failed:", error))
+      .finally(() => {
+        mirroring = false;
+      });
+  };
+  const pluginTimer = setInterval(syncPlugins, PLUGIN_SYNC_INTERVAL_MS);
   // Forwarding a port by hand or stopping one answers right away rather than on the next tick.
   const unsubscribe = settings.subscribe(() => {
     controller.invalidate();
@@ -177,6 +191,7 @@ export default function contribute(server: PluginServerContext) {
     clearInterval(guardTimer);
     clearInterval(reportTimer);
     for (const remove of removeHooks) remove();
+    clearInterval(pluginTimer);
     controller.close();
     unsubscribe();
   };

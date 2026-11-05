@@ -11,11 +11,20 @@ import {
   type Notice,
   type Status,
 } from "../shared/contract";
-import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
 import { PortForwarder } from "./forwarder";
-import { COMPANION_ID, type GuardTarget, guardTarget, hostRepoPaths, installCompanion, repoLinkScript, WorktreeGuard } from "./guard";
+import {
+  COMPANION_ID,
+  companionMirrors,
+  installCompanion,
+  managedHome,
+  wantsCompanion,
+  writePluginList,
+} from "./companion-host";
+import { type DockerContainer, type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
+import { type GuardTarget, guardTarget, hostRepoPaths, repoLinkScript, WorktreeGuard, writeGuardConfig } from "./guard";
 import { type ProjectIcon, readProjectIcon } from "./icons";
-import { hostPaseoHome, linkHomeScript, pinWorktreesRoot, planPaseoHome, repoRootOf } from "./paseo-home";
+import { hostPaseoHome, linkHomeScript, pinWorktreesRoot, planPaseoHome, repoRootOf, shellQuote } from "./paseo-home";
+import { type HostPlugins, hostPluginSignature, installedIds, listHostPlugins } from "./plugin-mirror";
 import { resolveTool, run, toolEnv } from "./process";
 
 const LOG_LINES = 40;
@@ -75,6 +84,10 @@ export class DevcontainerController {
     this.catalog.workspaces.map((workspace) => ({ folder: workspace.directory, title: workspace.title })),
   );
   private notices: Notice[] = [];
+  // Repositories whose plugins are being mirrored, so syncs do not overlap.
+  private readonly mirroring = new Set<string>();
+  // This machine's plugin config at the last background mirror; null to mirror on the next sync.
+  private mirroredSignature: string | null = null;
   private nextJobId = 1;
   private catalog: PaseoCatalog = { projects: [], workspaces: [] };
   private cached: { at: number; status: Promise<Status> } | null = null;
@@ -115,6 +128,35 @@ export class DevcontainerController {
     await this.forwarder.sync(settings, docker, containers);
   }
 
+  // Mirrors this machine's plugins to running daemons when they change here; called on an interval.
+  // The first call also catches up daemons that started before this plugin loaded.
+  async syncPlugins(): Promise<void> {
+    const settings = await this.readSettings();
+    const signature = settings.mirrorHostPlugins ? hostPluginSignature() : "off";
+    if (signature === null || signature === this.mirroredSignature) return;
+    // Set first: a failure is logged once, and retried on the next change rather than every poll.
+    this.mirroredSignature = signature;
+    const { tools, candidates } = await this.discover();
+    const host = settings.mirrorHostPlugins ? await listHostPlugins(settings) : null;
+    const log: Log = (line) => console.log(`[devcontainer-host] ${line}`);
+    for (const candidate of candidates) {
+      const container = candidate.container;
+      const home = managedHome(settings, candidate.repoPath, container);
+      // The companion reads the list whenever its daemon runs, including after the next start.
+      if (home && (!host || companionMirrors(home))) {
+        writePluginList(home, host?.plugins ?? null);
+        continue;
+      }
+      // Without the companion, only a running daemon can be told; a running job does it itself.
+      if (!host || !tools.docker || !container?.running) continue;
+      if (this.jobs.get(candidate.repoPath)?.state === "running") continue;
+      const target = { containerId: container.id, remoteUser: container.remoteUser };
+      const daemon = await this.daemonInfo(tools.docker, target);
+      if (!daemon?.running) continue;
+      await this.mirrorPlugins(host, tools.docker, target, candidate.repoPath, (line) => log(`${candidate.name}: ${line}`));
+    }
+  }
+
   close(): void {
     this.forwarder.close();
   }
@@ -122,6 +164,8 @@ export class DevcontainerController {
   // Settings changes (hidden containers, discovery) must show on the next status read.
   invalidate(): void {
     this.cached = null;
+    // An excluded plugin taken off the list, or mirroring turned on, applies to running daemons.
+    this.mirroredSignature = null;
   }
 
   startAction(repoPath: string, action: Action): Job {
@@ -554,7 +598,11 @@ export class DevcontainerController {
     { optional = false }: { optional?: boolean } = {},
   ): Promise<void> {
     phase("Checking Paseo in the container");
-    const guard = await this.linkRepo(settings, docker, target, repoPath, log);
+    // Read again: `devcontainer up` may have just created the container.
+    const container = (await listDockerContainers(docker).catch(() => [])).find((entry) => entry.id === target.containerId) ?? null;
+    const guard = await this.linkRepo(settings, docker, target, repoPath, container, log);
+    const home = wantsCompanion(settings) ? managedHome(settings, repoPath, container) : null;
+    const plugins = settings.mirrorHostPlugins ? await this.hostPlugins(settings, log) : null;
     let info = await this.daemonInfo(docker, target);
     if (!info) throw new Error("Could not query Paseo in the container");
     if (!info.installed) {
@@ -571,11 +619,12 @@ export class DevcontainerController {
       this.forwarder.setDaemonRunning(repoPath, true);
       log(`Daemon already running (${info.serverId ?? "unknown server"})`);
       this.checkServerId(repoPath, info, log);
-      if (guard) await this.prepareCompanion(docker, target, guard, true, log);
+      if (home) await this.prepareCompanion(settings, docker, target, home, guard, plugins, true, log);
+      await this.mirrorHostPlugins(plugins, home, docker, target, repoPath, phase, log);
       return;
     }
     await this.linkPaseoHome(settings, docker, target, repoPath, log);
-    if (guard) await this.prepareCompanion(docker, target, guard, false, log);
+    if (home) await this.prepareCompanion(settings, docker, target, home, guard, plugins, false, log);
     phase("Starting Paseo daemon");
     // `paseo daemon start` detaches its supervisor, so it outlives this exec.
     const result = await this.exec(
@@ -594,6 +643,7 @@ export class DevcontainerController {
         this.forwarder.setDaemonRunning(repoPath, true);
         log(`Daemon running (${info.serverId ?? "unknown server"})`);
         this.checkServerId(repoPath, info, log);
+        await this.mirrorHostPlugins(plugins, home, docker, target, repoPath, phase, log);
         return;
       }
       await new Promise<void>((resolve) => setTimeout(() => resolve(), 1_000));
@@ -639,12 +689,10 @@ export class DevcontainerController {
     docker: string,
     target: Target,
     repoPath: string,
+    container: DockerContainer | null,
     log: Log,
   ): Promise<GuardTarget | null> {
     if (!settings.guardWorktrees) return null;
-    // Read again: `devcontainer up` may have just created the container.
-    const containers = await listDockerContainers(docker).catch(() => []);
-    const container = containers.find((entry) => entry.id === target.containerId);
     if (!container?.workspaceFolder) {
       log("Worktree guard: the repository's folder in the container is unknown; not linking its path.");
       return null;
@@ -661,24 +709,37 @@ export class DevcontainerController {
     return guardTarget(settings, repoPath, container);
   }
 
-  // Copies the companion plugin into the container's Paseo home and registers it; a running
-  // daemon reloads it when its files changed.
-  private async prepareCompanion(docker: string, target: Target, guard: GuardTarget, running: boolean, log: Log) {
+  // Writes what the companion's modules act on, copies the companion into the container's Paseo
+  // home and registers it; a running daemon reloads it when its files changed. Plugins are null
+  // when this machine's list could not be read, which keeps the last list.
+  private async prepareCompanion(
+    settings: DevcontainerSettings,
+    docker: string,
+    target: Target,
+    home: string,
+    guard: GuardTarget | null,
+    plugins: HostPlugins | null,
+    running: boolean,
+    log: Log,
+  ) {
     let install: ReturnType<typeof installCompanion>;
     try {
-      install = installCompanion(guard, running, log);
+      if (guard) writeGuardConfig(guard.config);
+      if (!settings.mirrorHostPlugins) writePluginList(home, null);
+      else if (plugins) writePluginList(home, plugins.plugins);
+      install = installCompanion(home, running, log);
     } catch (error) {
-      log(`Worktree guard: could not install the companion plugin: ${error instanceof Error ? error.message : String(error)}`);
+      log(`Companion: could not install the companion plugin: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
     if (!install) return;
     if (!install.registered) {
-      log("Worktree guard: the container's companion plugin starts with its Paseo daemon's next start.");
+      log("Companion: the container's companion plugin starts with its Paseo daemon's next start.");
       return;
     }
     if (running && install.changed) {
       const result = await this.exec(docker, target, `paseo plugin reload ${COMPANION_ID}`, { timeoutMs: 60_000 });
-      if (result.code !== 0) log(`Worktree guard: could not reload the companion plugin: ${lastLine(result.stderr)}`);
+      if (result.code !== 0) log(`Companion: could not reload the companion plugin: ${lastLine(result.stderr)}`);
     }
   }
 
@@ -689,6 +750,69 @@ export class DevcontainerController {
       log(`Warning: daemon server ID ${info.serverId} differs from ${expected}; pair the new host in Paseo.`);
     }
     this.knownServerIds.set(repoPath, info.serverId);
+  }
+
+  // This machine's plugins to mirror; null when off or unreadable, which never fails the job.
+  private async hostPlugins(settings: DevcontainerSettings, log: Log): Promise<HostPlugins | null> {
+    try {
+      const host = await listHostPlugins(settings);
+      for (const skipped of host.skipped) log(`Not mirroring ${skipped}`);
+      return host;
+    } catch (error) {
+      log(`Could not list this machine's plugins: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  // Once the daemon runs: the companion installs the plugins itself when it is registered, else
+  // they are installed from here. Never fails the job.
+  private async mirrorHostPlugins(
+    plugins: HostPlugins | null,
+    home: string | null,
+    docker: string,
+    target: Target,
+    repoPath: string,
+    phase: (text: string) => void,
+    log: Log,
+  ): Promise<void> {
+    if (!plugins) return;
+    if (home && companionMirrors(home)) {
+      if (plugins.plugins.length > 0) log("The companion plugin installs this machine's plugins in the container's daemon.");
+      return;
+    }
+    phase("Mirroring this machine's plugins");
+    await this.mirrorPlugins(plugins, docker, target, repoPath, log);
+  }
+
+  // Adds the host's plugins the container's daemon lacks; failures are logged per plugin.
+  private async mirrorPlugins(host: HostPlugins, docker: string, target: Target, repoPath: string, log: Log) {
+    if (this.mirroring.has(repoPath)) return;
+    this.mirroring.add(repoPath);
+    try {
+      if (host.plugins.length === 0) return;
+      const listed = await this.exec(docker, target, "paseo plugin ls --json", { timeoutMs: 30_000 });
+      if (listed.code !== 0) {
+        log(`Could not list the container's plugins: ${lastLine(listed.stderr) || `exit ${listed.code}`}`);
+        return;
+      }
+      let installed: Set<string>;
+      try {
+        installed = installedIds(listed.stdout);
+      } catch {
+        log("Could not read the container's plugin list");
+        return;
+      }
+      for (const plugin of host.plugins.filter((entry) => !installed.has(entry.id))) {
+        log(`Installing plugin ${plugin.id}`);
+        const result = await this.exec(docker, target, `paseo plugin add ${plugin.args.map(shellQuote).join(" ")}`, {
+          timeoutMs: INSTALL_TIMEOUT_MS,
+          onLine: log,
+        });
+        if (result.code !== 0) log(`Could not install plugin ${plugin.id}: ${lastLine(result.stderr) || `exit ${result.code}`}`);
+      }
+    } finally {
+      this.mirroring.delete(repoPath);
+    }
   }
 
   private async installPaseo(

@@ -9,13 +9,18 @@ const generalShape = {
   autoInstallPaseo: z.boolean().default(true),
   // Runs in the container as the remote user with `bash -lc`.
   installCommand: z.string().default(DEFAULT_INSTALL_COMMAND),
+  // Installs this machine's enabled plugins in each container's daemon, through its companion plugin
+  // when the Paseo home is kept here; only adds, never removes.
+  mirrorHostPlugins: z.boolean().default(true),
+  // Plugin IDs left out of the mirror.
+  mirrorExcludedPlugins: z.array(z.string()).default([]),
   // Keeps each container's Paseo home in a folder on this machine, mounted at the same path, so
   // sessions survive rebuilds and git worktrees resolve on both sides.
   persistPaseoHome: z.boolean().default(true),
   // Empty: $PASEO_HOME/plugin-data/devcontainer-host/homes. One subfolder per repository.
   paseoHomesDir: z.string().default(""),
   // Snapshots worktree records shared with containers and restores what a prune or repair on the
-  // other side breaks; installs a companion plugin in container daemons. Needs persistPaseoHome.
+  // other side breaks; the companion plugin in container daemons repairs there. Needs persistPaseoHome.
   guardWorktrees: z.boolean().default(true),
   // Empty: resolved from PATH and common install locations.
   dockerPath: z.string().default(""),
