@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { appendFileSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,7 +15,7 @@ import { type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalo
 import { PortForwarder } from "./forwarder";
 import { COMPANION_ID, type GuardTarget, guardTarget, hostRepoPaths, installCompanion, repoLinkScript, WorktreeGuard } from "./guard";
 import { type ProjectIcon, readProjectIcon } from "./icons";
-import { linkHomeScript, pinWorktreesRoot, planPaseoHome, repoRootOf } from "./paseo-home";
+import { hostPaseoHome, linkHomeScript, pinWorktreesRoot, planPaseoHome, repoRootOf } from "./paseo-home";
 import { resolveTool, run, toolEnv } from "./process";
 
 const LOG_LINES = 40;
@@ -385,7 +385,11 @@ export class DevcontainerController {
       dockerError,
       tools,
       notices: [...this.notices],
-      machine: { name: hostname().replace(/\.local$/, "") || "This machine", platform: process.platform },
+      machine: {
+        name: hostname().replace(/\.local$/, "") || "This machine",
+        platform: process.platform,
+        serverId: readServerId(),
+      },
     };
   }
 
@@ -763,6 +767,15 @@ function appendLog(file: string, line: string): void {
     appendFileSync(file, `${line}\n`);
   } catch {
     // The in-memory tail still shows in the app.
+  }
+}
+
+// This daemon's Paseo server ID, so the app can name the host as it does elsewhere.
+function readServerId(): string | null {
+  try {
+    return readFileSync(join(hostPaseoHome(), "server-id"), "utf8").trim() || null;
+  } catch {
+    return null;
   }
 }
 

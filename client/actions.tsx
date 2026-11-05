@@ -1,19 +1,19 @@
 import type { PluginHostProps } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/ui";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
 import { PortPills } from "./ports";
+import { TOOLTIP_DELAY_MS, TooltipBubble, useTooltip } from "./tooltip";
+import { IssueBadge } from "./worktrees";
 import { FolderIcon, ProjectIcon } from "./project-icon";
 import {
   type ContainerView,
   type DevcontainersState,
   FAILURE_VISIBLE_MS,
-  guardBadge,
   kindColor,
   STATUS_KEY,
-  toneColor,
   type UiAction,
   useDismissJob,
   useOpenLogs,
@@ -45,17 +45,15 @@ const ACTION_TOOLTIPS: Record<UiAction, string> = {
   logs: "Open the log in a terminal",
   dismiss: "Dismiss the failure",
 };
-const TOOLTIP_DELAY_MS = 350;
 // Rows wait longer so passing over them on the way to an icon shows nothing.
 const ROW_TOOLTIP_DELAY_MS = 700;
-// Safety net for a missed hover-out.
-const TOOLTIP_MAX_MS = 4_000;
-let activeTooltip: { current: () => void } | null = null;
 
 // Each leading column (chevron, status dot, project icon) is 16 wide plus a 10 gap; text under
 // the name, and a card's panel, indent by the columns a row shows.
 export const LEAD = 26;
 export const CARD_INDENT = 3 * LEAD;
+
+const noop = () => {};
 
 const NEEDS_CONFIRM: ReadonlySet<UiAction> = new Set(["stop", "rebuild", "rebuild-no-cache"]);
 
@@ -103,10 +101,8 @@ export function ContainerRow({
   const [confirming, setConfirming] = useState<UiAction | null>(null);
   const [opening, setOpening] = useState(false);
   const [hovered, setHovered] = useState(false);
-  // A visible tooltip lifts the row above its siblings so the bubble is not painted over.
-  const [tooltipShown, setTooltipShown] = useState(false);
   // Hovering the row itself shows its full, untruncated text.
-  const rowTooltip = useTooltip(ROW_TOOLTIP_DELAY_MS, setTooltipShown);
+  const rowTooltip = useTooltip(ROW_TOOLTIP_DELAY_MS);
   const { container } = view;
   // Cards are page rows that lead the running section with their project's icon and name.
   const card = variant === "card";
@@ -169,7 +165,7 @@ export function ContainerRow({
       size={hit}
       disabled={disabled}
       onPress={onPress}
-      onTooltip={setTooltipShown}
+      onTooltip={noop}
       onHoverStart={rowTooltip.hide}
     />
   );
@@ -234,9 +230,10 @@ export function ContainerRow({
         setHovered(false);
         rowTooltip.hide();
       }}
-      style={[styles.row, hovered && styles.hovered, tooltipShown && { zIndex: 10 }]}
+      ref={rowTooltip.ref}
+      style={[styles.row, hovered && styles.hovered]}
     >
-      {rowTooltip.shown ? <TooltipBubble theme={theme} text={fullText} top={layout.compact ? 40 : 30} align="left" /> : null}
+      {rowTooltip.shown ? <TooltipBubble theme={theme} text={fullText} anchor={rowTooltip.anchor} /> : null}
       <View style={styles.line}>
         {expandable ? (
           <View style={styles.lead}>
@@ -275,7 +272,7 @@ export function ContainerRow({
             </Text>
           ) : null}
         </View>
-        {confirming ? null : <GuardPill theme={theme} view={view} popover={!page} />}
+        {confirming ? null : <IssueBadge theme={theme} container={container} />}
         {confirming ? null : <PortPills theme={theme} container={container} max={page ? 3 : 2} />}
         {confirming ? (
           <View style={styles.icons}>
@@ -340,82 +337,6 @@ export function ContainerRow({
   );
 }
 
-// Worktrees broken, at risk, or repaired; the popover only shows broken ones.
-function GuardPill({ theme, view, popover }: { theme: PluginHostProps["theme"]; view: ContainerView; popover: boolean }) {
-  const badge = guardBadge(view.container.guard);
-  if (!badge || (popover && badge.tone !== "danger")) return null;
-  if (badge.broken + badge.atRisk === 0) return null;
-  const counts: [number, string][] = [
-    [badge.broken, theme.colors.statusDanger],
-    [badge.atRisk, theme.colors.statusWarning],
-  ];
-  const tip = [
-    badge.broken > 0 ? `${badge.broken} ${badge.broken === 1 ? "workspace where" : "workspaces where"} git is broken` : null,
-    badge.atRisk > 0 ? `${badge.atRisk} at risk of breaking` : null,
-  ]
-    .filter(Boolean)
-    .join(", ");
-  return (
-    <WithTooltip theme={theme} text={`Git worktrees: ${tip}. ${popover ? "Open the container to fix." : "Fix them in the workspace list below."}`} align="right">
-      <View
-        accessibilityLabel={`Worktrees: ${badge.text}`}
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          gap: 5,
-          paddingHorizontal: 7,
-          paddingVertical: 1,
-          borderRadius: 10,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          flexShrink: 0,
-        }}
-      >
-        <Icon name="GitBranch" size={12} color={toneColor(badge.tone, theme)} />
-        {counts
-          .filter(([count]) => count > 0)
-          .map(([count, color]) => (
-            <Text key={color} style={{ color, fontSize: 11, fontVariant: ["tabular-nums"] }}>
-              {count}
-            </Text>
-          ))}
-      </View>
-    </WithTooltip>
-  );
-}
-
-// Shows `text` in a bubble below its children on hover, after the usual delay. Presses go to
-// `onPress`, so wrapping part of a pressable row keeps the row working.
-export function WithTooltip({
-  theme,
-  text,
-  children,
-  align = "left",
-  top = 22,
-  onPress,
-}: {
-  theme: PluginHostProps["theme"];
-  text: string;
-  children: ReactNode;
-  align?: "left" | "right";
-  top?: number;
-  onPress?: () => void;
-}) {
-  const tip = useTooltip(TOOLTIP_DELAY_MS);
-  return (
-    <Pressable
-      accessible={false}
-      onPress={onPress}
-      onHoverIn={tip.showLater}
-      onHoverOut={tip.hide}
-      style={{ position: "relative", zIndex: tip.shown ? 20 : 0 }}
-    >
-      {children}
-      {tip.shown ? <TooltipBubble theme={theme} text={text} top={top} align={align} /> : null}
-    </Pressable>
-  );
-}
-
 interface IconButtonProps {
   theme: PluginHostProps["theme"];
   icon: string;
@@ -428,69 +349,6 @@ interface IconButtonProps {
   onTooltip(shown: boolean): void;
   // Lets the row cancel its own pending tooltip when the pointer reaches an icon.
   onHoverStart(): void;
-}
-
-// Ghost icon button with a hover background and a delayed tooltip below it, right-aligned so the
-// bubble grows inward from the row's right edge and stays inside the popover.
-// Delayed hover tooltip shared by icon buttons and rows: one visible at a time, and handlers read
-// refs because the web Pressable can keep the first handler it was given.
-function useTooltip(delayMs: number, onChange?: (shown: boolean) => void) {
-  const [shown, setShown] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
-  const hideRef = useRef<() => void>(() => {});
-
-  hideRef.current = () => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-    setShown(false);
-    onChangeRef.current?.(false);
-    if (activeTooltip === hideRef) activeTooltip = null;
-  };
-  const showLater = () => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      if (activeTooltip && activeTooltip !== hideRef) activeTooltip.current();
-      activeTooltip = hideRef;
-      setShown(true);
-      onChangeRef.current?.(true);
-      // Safety net for a missed hover-out.
-      timer.current = setTimeout(() => hideRef.current(), TOOLTIP_MAX_MS);
-    }, delayMs);
-  };
-  useEffect(() => () => hideRef.current(), []);
-  return { shown, showLater, hide: () => hideRef.current() };
-}
-
-function TooltipBubble({ theme, text, top, align }: { theme: PluginHostProps["theme"]; text: string; top: number; align: "left" | "right" }) {
-  return (
-    <View
-      pointerEvents="none"
-      style={{
-        position: "absolute",
-        top,
-        ...(align === "right" ? { right: 0, alignItems: "flex-end" as const } : { left: 0, alignItems: "flex-start" as const }),
-        width: 320,
-        zIndex: 100,
-      }}
-    >
-      <View
-        style={{
-          paddingHorizontal: 8,
-          paddingVertical: 4,
-          borderRadius: 6,
-          borderWidth: 1,
-          borderColor: theme.colors.border,
-          backgroundColor: theme.colors.surface2,
-        }}
-      >
-        <Text style={{ color: theme.colors.foreground, fontSize: 12 }} numberOfLines={4}>
-          {text}
-        </Text>
-      </View>
-    </View>
-  );
 }
 
 export function IconButton({
@@ -518,7 +376,7 @@ export function IconButton({
   };
 
   return (
-    <View style={{ position: "relative" }}>
+    <View ref={bubble.ref} collapsable={false} style={{ position: "relative" }}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={label}
@@ -541,7 +399,7 @@ export function IconButton({
       >
         <Icon name={icon} size={14} color={color} />
       </Pressable>
-      {bubble.shown ? <TooltipBubble theme={theme} text={tooltip} top={size + 4} align="right" /> : null}
+      {bubble.shown ? <TooltipBubble theme={theme} text={tooltip} anchor={bubble.anchor} /> : null}
     </View>
   );
 }
