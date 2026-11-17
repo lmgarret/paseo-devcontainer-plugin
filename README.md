@@ -8,7 +8,7 @@ See [OVERVIEW.md](OVERVIEW.md) for what it does and how it behaves.
 
 ## Requirements
 
-- Paseo 0.15.0 or later, with plugins enabled (Settings → Plugins).
+- Paseo 0.16.1 or later, with plugins enabled (Settings → Plugins).
 - Docker and the [`devcontainer` CLI](https://github.com/devcontainers/cli) on the machine running the Paseo daemon.
 
 ## Install
