@@ -6,10 +6,11 @@ import { ACTION_META } from "./client/actions";
 import { DEVCONTAINERS_ICON } from "./client/devcontainers-icon";
 import { GUIDE_SCREEN_ID, GuideScreen, setGuideOpener } from "./client/guide";
 import { commandActions, type UiAction } from "./client/state";
-import { type Container, openLogsRpc, openShellRpc, runActionRpc, statusRpc } from "./shared/contract";
+import { type Container, openLogsRpc, openShellRpc, runActionRpc, statusRpc, statusSubscription } from "./shared/contract";
 
 const SETTINGS_ID = "settings";
-const COMMAND_REFRESH_MS = 15_000;
+// After the status subscription closed, read once and subscribe again this much later.
+const RESUBSCRIBE_MS = 10_000;
 const KEYWORDS = ["devcontainer", "dev container", "docker", "container"];
 
 export default function contribute(client: PluginClientContext) {
@@ -59,7 +60,7 @@ export default function contribute(client: PluginClientContext) {
     },
   });
 
-  // One item per container and currently valid action, refreshed from the daemon.
+  // One item per container and currently valid action, kept current by the daemon's pushes.
   const commands = new Map<string, () => void>();
   const sync = (containers: Container[]) => {
     const wanted = new Map<string, { container: Container; action: UiAction }>();
@@ -103,20 +104,41 @@ export default function contribute(client: PluginClientContext) {
   };
 
   let stopped = false;
+  let release: (() => void) | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
   const refresh = async () => {
     try {
       const status = await client.rpc(statusRpc, {});
       if (!stopped) sync(status.containers);
     } catch {
-      // Host offline or plugin reloading; keep the last items and retry on the next tick.
+      // Host offline or plugin reloading; keep the last items.
     }
   };
-  void refresh();
-  const timer = setInterval(() => void refresh(), COMMAND_REFRESH_MS);
+  const watch = () => {
+    retryTimer = null;
+    if (stopped) return;
+    release = client.subscribe(
+      statusSubscription,
+      {},
+      (event) => {
+        if (!stopped && event.status) sync(event.status.containers);
+      },
+      {
+        onClosed: () => {
+          release = null;
+          if (stopped) return;
+          void refresh();
+          retryTimer = setTimeout(watch, RESUBSCRIBE_MS);
+        },
+      },
+    );
+  };
+  watch();
 
   return () => {
     stopped = true;
-    clearInterval(timer);
+    if (retryTimer) clearTimeout(retryTimer);
+    release?.();
     for (const remove of commands.values()) remove();
     commands.clear();
   };

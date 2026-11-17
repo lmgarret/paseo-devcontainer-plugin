@@ -1,4 +1,4 @@
-import { defineRpc, defineSettings } from "@getpaseo/plugin";
+import { defineRpc, defineSettings, defineSubscription } from "@getpaseo/plugin";
 import { z } from "zod";
 
 // npm 11 skips dependency install scripts unless allowed; node-pty needs its build for terminals.
@@ -231,6 +231,14 @@ export const statusRpc = defineRpc({
   name: "status.get",
   input: z.object({}),
   output: statusSchema,
+});
+
+// A snapshot on subscribe, then one whenever it changes; `error` when the daemon cannot compute it.
+export const statusSubscription = defineSubscription({
+  name: "status.watch",
+  // The app bumps `attempt` to subscribe again after the subscription closed.
+  input: z.object({ attempt: z.number().int().optional() }),
+  event: z.object({ status: statusSchema.nullable(), error: z.string().nullable() }),
 });
 
 export const runActionRpc = defineRpc({

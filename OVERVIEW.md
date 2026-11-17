@@ -23,6 +23,8 @@ A "Dev containers" row in the sidebar footer shows how many containers run. Its 
 
 Pressing a row opens the "All dev containers" page with that container shown. When a paired container stops, a toast suggests starting it. The Command Center lists the actions valid for each container.
 
+The sidebar, the "All dev containers" page and the Command Center update as soon as something changes: a job's progress, a container starting or stopping, a port detected, a worktree check. Changes made outside Paseo, such as `docker stop`, show within about 5 seconds. If the live connection to the plugin drops, the app reads the status every 15 seconds until it reconnects.
+
 The "All dev containers" page sums up what runs, what is paired, and how many ports are forwarded. Running containers come first, as cards that open on their details: its project's workspaces on the container's own Paseo host, most urgent first, each opening on that host; its forwarded ports; and its Paseo daemon. Pressing a card's header folds it. Other containers follow as a compact list grouped by project, with their start action, and any container can be hidden from the sidebar.
 
 ## Port forwarding

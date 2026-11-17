@@ -140,7 +140,11 @@ export class WorktreeGuard {
   private readonly repos = new Map<string, RepoState>();
 
   // This machine's live Paseo workspaces.
-  constructor(private readonly hostWorkspaces: () => LiveWorkspace[]) {}
+  constructor(
+    private readonly hostWorkspaces: () => LiveWorkspace[],
+    // Runs after each check updates a repository's status.
+    private readonly onChange: () => void = () => {},
+  ) {}
 
   // The row's last result; starts a check when it is stale. Never waits for one.
   status(target: GuardTarget, docker: string | null): Guard {
@@ -374,6 +378,7 @@ export class WorktreeGuard {
       restored: state.restores,
       companion: companionState(target.home),
     };
+    this.onChange();
     return { status: { ...state.status }, results };
   }
 }

@@ -80,9 +80,11 @@ export class DevcontainerController {
   // Last server ID a daemon reported per repository, for when the container is stopped.
   private readonly knownServerIds = new Map<string, string>();
   private readonly forwarder = new PortForwarder();
-  private readonly guard = new WorktreeGuard(() =>
-    this.catalog.workspaces.map((workspace) => ({ folder: workspace.directory, title: workspace.title })),
+  private readonly guard = new WorktreeGuard(
+    () => this.catalog.workspaces.map((workspace) => ({ folder: workspace.directory, title: workspace.title })),
+    () => this.changed(),
   );
+  private readonly listeners = new Set<() => void>();
   private notices: Notice[] = [];
   // Repositories whose plugins are being mirrored, so syncs do not overlap.
   private readonly mirroring = new Set<string>();
@@ -107,8 +109,32 @@ export class DevcontainerController {
         if (this.cached?.status === status) this.cached = null;
       });
     }
-    const status = await this.cached.status;
-    // Jobs and forwards change faster than the cache; always return the live ones.
+    return this.withLive(await this.cached.status);
+  }
+
+  // The last computed status with live jobs and forwards, computing it only when there is none:
+  // cheap enough to run on every change.
+  async liveStatus(): Promise<Status> {
+    return this.cached ? this.withLive(await this.cached.status) : this.status();
+  }
+
+  // Runs on job progress, forward changes, guard checks and anything that invalidates the status.
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private changed(): void {
+    for (const listener of this.listeners) listener();
+  }
+
+  private stale(): void {
+    this.cached = null;
+    this.changed();
+  }
+
+  // Jobs and forwards change faster than the cache; always return the live ones.
+  private withLive(status: Status): Status {
     return {
       ...status,
       containers: status.containers.map((container) => ({
@@ -126,6 +152,7 @@ export class DevcontainerController {
     if (!docker) return;
     const containers = await listDockerContainers(docker);
     await this.forwarder.sync(settings, docker, containers);
+    this.changed();
   }
 
   // Mirrors this machine's plugins to running daemons when they change here; called on an interval.
@@ -163,7 +190,7 @@ export class DevcontainerController {
 
   // Settings changes (hidden containers, discovery) must show on the next status read.
   invalidate(): void {
-    this.cached = null;
+    this.stale();
     // An excluded plugin taken off the list, or mirroring turned on, applies to running daemons.
     this.mirroredSignature = null;
   }
@@ -184,7 +211,7 @@ export class DevcontainerController {
       error: null,
     };
     this.jobs.set(repoPath, job);
-    this.cached = null;
+    this.stale();
     const file = logFile(repoPath);
     resetLog(file, `── ${ACTION_LABELS[action]} · ${repoPath} · ${new Date(job.startedAt).toLocaleString()}`);
     void this.execute(repoPath, job, file)
@@ -203,7 +230,7 @@ export class DevcontainerController {
       )
       .finally(() => {
         job.endedAt = Date.now();
-        this.cached = null;
+        this.stale();
       });
     return { ...job, log: [...job.log] };
   }
@@ -245,7 +272,7 @@ export class DevcontainerController {
   dismiss(repoPath: string): void {
     if (this.jobs.get(repoPath)?.state === "running") throw new Error("The job is still running");
     this.jobs.delete(repoPath);
-    this.cached = null;
+    this.stale();
   }
 
   async projectIcon(projectId: string): Promise<ProjectIcon | null> {
@@ -264,7 +291,7 @@ export class DevcontainerController {
       trigger: "manual",
       repair: name ? { name, ...(branch ? { branch } : {}) } : "all",
     });
-    this.cached = null;
+    this.stale();
     return {
       restored: results.filter((result) => !result.error).length,
       failed: results.filter((result) => result.error).length,
@@ -293,7 +320,7 @@ export class DevcontainerController {
     if (!tools.docker) return;
     const docker = tools.docker;
     await Promise.all(targets.map((target) => this.guard.afterArchive(target, docker, workspace.cwd)));
-    if (targets.length > 0) this.cached = null;
+    if (targets.length > 0) this.stale();
   }
 
   // A workspace was created here in a repository its container also uses: worth knowing, and
@@ -310,7 +337,7 @@ export class DevcontainerController {
       this.notices.push({ id: `${target.repoPath}:${workspace.cwd}:${Date.now()}`, at: Date.now(), repoPath: target.repoPath, message });
       if (tools.docker) await this.guard.check(target, tools.docker, { trigger: "create" });
     }
-    if (targets.length > 0) this.cached = null;
+    if (targets.length > 0) this.stale();
   }
 
   // Runs without a client: checks stale repositories, which also acts on the container's reports.
@@ -478,6 +505,7 @@ export class DevcontainerController {
       appendLog(file, text);
       job.log.push(text);
       if (job.log.length > LOG_LINES) job.log.splice(0, job.log.length - LOG_LINES);
+      this.changed();
     };
     const phase = (text: string) => {
       job.phase = text;

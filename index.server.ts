@@ -9,7 +9,9 @@ import {
   projectIconRpc,
   runActionRpc,
   settingsDefinition,
+  type Status,
   statusRpc,
+  statusSubscription,
   worktreesGuideRpc,
 } from "./shared/contract";
 import type { PaseoCatalog, WorkspaceRef } from "./server/discovery";
@@ -23,6 +25,10 @@ const GUARD_INTERVAL_MS = 60_000;
 // The container's companion reports its archive repairs in a file; reading it is cheap.
 const REPORT_INTERVAL_MS = 5_000;
 const PLUGIN_SYNC_INTERVAL_MS = 15_000;
+// While the app watches: changes come in bursts (build logs), and docker state changed outside
+// Paseo only shows on a recompute.
+const PUSH_DEBOUNCE_MS = 250;
+const WATCH_REFRESH_MS = 5_000;
 
 export default function contribute(server: PluginServerContext) {
   const settings = server.registerSettings(settingsDefinition);
@@ -129,6 +135,59 @@ export default function contribute(server: PluginServerContext) {
     paseo = context.paseo;
     return controller.status();
   });
+
+  // Status watchers share one snapshot, pushed only when it differs from the last one.
+  type StatusEvent = { status: Status | null; error: string | null };
+  const watchers = new Set<(event: StatusEvent) => void>();
+  let lastPushed: string | null = null;
+  let pushTimer: ReturnType<typeof setTimeout> | null = null;
+  let watchTimer: ReturnType<typeof setInterval> | null = null;
+  const snapshot = async (fresh: boolean): Promise<StatusEvent> => {
+    try {
+      return { status: await (fresh ? controller.status() : controller.liveStatus()), error: null };
+    } catch (error) {
+      return { status: null, error: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const broadcast = async (fresh: boolean) => {
+    if (watchers.size === 0) return;
+    const event = await snapshot(fresh);
+    const json = JSON.stringify(event);
+    if (json === lastPushed) return;
+    lastPushed = json;
+    for (const push of watchers) push(event);
+  };
+  const removeChangeListener = controller.onChange(() => {
+    if (watchers.size === 0 || pushTimer) return;
+    pushTimer = setTimeout(() => {
+      pushTimer = null;
+      void broadcast(false);
+    }, PUSH_DEBOUNCE_MS);
+  });
+
+  // Returns at once: a settled handler promise would close the subscription.
+  server.handle(statusSubscription, (_input, { paseo: api, push, signal }) => {
+    paseo = api;
+    const watcher = (event: StatusEvent) => void push(event).catch(() => {});
+    signal.addEventListener("abort", () => {
+      watchers.delete(watcher);
+      if (watchers.size > 0 || !watchTimer) return;
+      clearInterval(watchTimer);
+      watchTimer = null;
+      lastPushed = null;
+    });
+    // The first event is this subscriber's own snapshot, whatever the others last received.
+    void snapshot(true).then(async (initial) => {
+      if (signal.aborted) return;
+      await push(initial).catch(() => {});
+      if (signal.aborted) return;
+      watchers.add(watcher);
+      // Its snapshot may be newer than the last broadcast: compare against nothing next time.
+      lastPushed = null;
+      watchTimer ??= setInterval(() => void broadcast(true), WATCH_REFRESH_MS);
+    });
+  });
+
   // Terminals belong to a workspace: reuse the one for this folder, or open it.
   const openLogs = async (api: PluginHandlerContext["paseo"], repoPath: string) => {
     const log = controller.logCommand(repoPath);
@@ -194,5 +253,9 @@ export default function contribute(server: PluginServerContext) {
     clearInterval(pluginTimer);
     controller.close();
     unsubscribe();
+    removeChangeListener();
+    if (pushTimer) clearTimeout(pushTimer);
+    if (watchTimer) clearInterval(watchTimer);
+    watchers.clear();
   };
 }

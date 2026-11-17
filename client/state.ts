@@ -1,5 +1,5 @@
 import type { PluginTheme } from "@getpaseo/plugin";
-import { getPaseoClient, type PluginHostSummary, useHosts, useRpc, useSettings } from "@getpaseo/plugin/client";
+import { type PluginHostSummary, useHosts, useRpc, useSettings, useSubscription } from "@getpaseo/plugin/client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -17,6 +17,7 @@ import {
   settingsDefinition,
   type Status,
   statusRpc,
+  statusSubscription,
 } from "../shared/contract";
 
 // Client-driven: shell and logs open a Paseo terminal, dismiss forgets a finished job.
@@ -48,14 +49,35 @@ export interface DevcontainersState {
 
 export const STATUS_KEY = ["devcontainer-status"];
 
-export function useStatusQuery() {
+// Reads the shared status; `useLiveStatus` keeps it current from the daemon's pushes.
+export function useStatusQuery(refetchInterval: number | false = false) {
   const getStatus = useRpc(statusRpc);
-  return useQuery({
-    queryKey: STATUS_KEY,
-    queryFn: () => getStatus({}),
-    refetchInterval: (query) =>
-      query.state.data?.containers.some((container) => container.job?.state === "running") ? 1_500 : 5_000,
+  return useQuery({ queryKey: STATUS_KEY, queryFn: () => getStatus({}), staleTime: Infinity, refetchInterval });
+}
+
+// Without a live subscription, poll slowly and try to subscribe again.
+const FALLBACK_POLL_MS = 15_000;
+const RESUBSCRIBE_MS = 10_000;
+
+export function useLiveStatus() {
+  const queryClient = useQueryClient();
+  const [attempt, setAttempt] = useState(0);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const subscription = useSubscription(statusSubscription, { attempt }, (event) => {
+    setPushError(event.error);
+    if (event.status) queryClient.setQueryData(STATUS_KEY, event.status);
   });
+  const down = subscription.status === "error" || subscription.status === "closed";
+  const query = useStatusQuery(down ? FALLBACK_POLL_MS : false);
+  useEffect(() => {
+    if (!down) return;
+    if (subscription.status === "error") console.warn("[devcontainer-host] status subscription failed:", subscription.error);
+    void queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+    const timer = setTimeout(() => setAttempt((value) => value + 1), RESUBSCRIBE_MS);
+    return () => clearTimeout(timer);
+  }, [down, subscription, queryClient]);
+  const error = pushError ?? (query.error instanceof Error ? query.error.message : null);
+  return { data: query.data, error };
 }
 
 export function useDevcontainers(): DevcontainersState {
@@ -66,7 +88,7 @@ export function useDevcontainers(): DevcontainersState {
     const timer = setInterval(() => setTick((tick) => tick + 1), 10_000);
     return () => clearInterval(timer);
   }, []);
-  const query = useStatusQuery();
+  const query = useLiveStatus();
   const runAction = useRpc(runActionRpc);
   const queryClient = useQueryClient();
   const mutation = useMutation({
@@ -77,7 +99,7 @@ export function useDevcontainers(): DevcontainersState {
   const views = (query.data?.containers ?? []).map((container) => describe(container, hosts));
   return {
     status: query.data,
-    error: query.error instanceof Error ? query.error.message : null,
+    error: query.error,
     views,
     pending: mutation.isPending,
     async run(repoPath, action) {
@@ -179,18 +201,16 @@ export interface PortActions {
 // Per-repository port choices live in settings, which only clients can write.
 export function usePortActions(): PortActions {
   const settings = useSettings(settingsDefinition);
-  const queryClient = useQueryClient();
   type RepoPorts = { forwarded: number[]; ignored: number[] };
   const update = async (repoPath: string, change: (ports: RepoPorts) => RepoPorts) => {
     if (settings.status !== "ready") throw new Error("Settings are not loaded yet");
     const next = change(settings.values.repoPorts[repoPath] ?? { forwarded: [], ignored: [] });
     const repoPorts = { ...settings.values.repoPorts, [repoPath]: next };
     if (next.forwarded.length === 0 && next.ignored.length === 0) delete repoPorts[repoPath];
+    // The daemon re-syncs forwards on save and pushes the result.
     if (!(await settings.save({ ...settings.values, repoPorts }, settings.revision))) {
       throw new Error(settings.saveError ?? "Could not save");
     }
-    // The daemon re-syncs forwards on save; pick up the result shortly after.
-    setTimeout(() => void queryClient.invalidateQueries({ queryKey: STATUS_KEY }), 1_000);
   };
   const without = (ports: number[], port: number) => ports.filter((entry) => entry !== port);
   return {
