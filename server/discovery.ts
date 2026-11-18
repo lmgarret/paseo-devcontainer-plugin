@@ -52,6 +52,8 @@ export interface Candidate {
   name: string;
   source: Container["source"];
   configFile: string | null;
+  // The `name` in its devcontainer.json, when it sets one.
+  devcontainerName: string | null;
   container: DockerContainer | null;
   project: ProjectRef | null;
   workspace: WorkspaceRef | null;
@@ -75,6 +77,44 @@ interface InspectResult {
 }
 
 const CONFIG_LOCATIONS = [".devcontainer/devcontainer.json", ".devcontainer.json"];
+
+// The `name` a devcontainer.json gives the container. The file is JSON with comments and trailing
+// commas, so those are dropped before parsing, leaving strings untouched.
+export function readDevcontainerName(configFile: string | null): string | null {
+  if (!configFile) return null;
+  try {
+    const source = readFileSync(configFile, "utf8");
+    let json = "";
+    for (let index = 0; index < source.length; index++) {
+      const char = source[index];
+      if (char === '"') {
+        const end = stringEnd(source, index);
+        json += source.slice(index, end);
+        index = end - 1;
+      } else if (char === "/" && source[index + 1] === "/") {
+        while (index < source.length && source[index] !== "\n") index++;
+        json += "\n";
+      } else if (char === "/" && source[index + 1] === "*") {
+        index = source.indexOf("*/", index + 2);
+        if (index < 0) break;
+        index++;
+      } else {
+        json += char;
+      }
+    }
+    const parsed = JSON.parse(json.replace(/,(\s*[}\]])/g, "$1")) as { name?: unknown };
+    return typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+// The index just past the string literal starting at `start`.
+function stringEnd(source: string, start: number): number {
+  let index = start + 1;
+  while (index < source.length && source[index] !== '"') index += source[index] === "\\" ? 2 : 1;
+  return index + 1;
+}
 
 export function findConfig(repoPath: string): string | null {
   for (const location of CONFIG_LOCATIONS) {
@@ -250,6 +290,7 @@ export function mergeCandidates(
       name: project?.name ?? basename(repoPath),
       source,
       configFile,
+      devcontainerName: readDevcontainerName(configFile),
       container,
       project,
       workspace,

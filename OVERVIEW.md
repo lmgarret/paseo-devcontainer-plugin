@@ -21,6 +21,8 @@ A "Dev containers" row in the sidebar footer shows how many containers run. Its 
 - start the Paseo daemon when it is down, or install Paseo when it is missing;
 - open a shell: a Paseo terminal in the project's workspace running `docker exec` into the container.
 
+Workspaces on a container's own Paseo host show a container icon with a small status mark: running, stopped, never built, busy, failed, or needing attention. A workspace whose worktree is at risk or broken, on this machine or in a container, also shows a git branch icon with a warning or error mark. The companion plugin draws the icons on a container's workspaces, since Paseo lets a plugin mark only its own host's workspaces; it needs the Paseo home kept on this machine, and reaches a running container at its next start or rebuild. Each icon can be hidden from the sidebar's Show menu, and both from the plugin's settings.
+
 Pressing a row opens the "All dev containers" page with that container shown. When a paired container stops, a toast suggests starting it. The Command Center lists the actions valid for each container.
 
 The sidebar, the "All dev containers" page and the Command Center update as soon as something changes: a job's progress, a container starting or stopping, a port detected, a worktree check. Changes made outside Paseo, such as `docker stop`, show within about 5 seconds. If the live connection to the plugin drops, the app reads the status every 15 seconds until it reconnects.
@@ -49,6 +51,7 @@ Settings:
 - Plugins: install this machine's enabled plugins in each container's daemon, except those you exclude. On by default. See below.
 - Paseo home: keep each container's Paseo home in a folder on this machine, `~/.paseo/plugin-data/devcontainer-host/homes/<repository>` by default. See below. On by default; applies to containers created afterwards.
 - Guard shared worktrees: check and repair the git worktrees this machine and a container share. See below. On by default.
+- Sidebar: whether workspaces show the container and worktree status icons, on by default, and the container's name beside its icon, off by default.
 - Builds: whether rebuilds open their log in a terminal. On by default.
 - Port forwarding: daemon and detected-port forwarding, the first daemon port, and ports to ignore.
 - Dotfiles: a repository, target path, and install command passed to `devcontainer up`, so created containers match VS Code's dotfiles setting.

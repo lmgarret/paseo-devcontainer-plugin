@@ -147,6 +147,25 @@ export function DevcontainerSettingsScreen({ theme }: PluginSurfaceProps) {
         </SettingsCard>
       </SettingsSection>
 
+      <SettingsSection title="Sidebar">
+        <SettingsCard>
+          <SettingsSwitch
+            label="Show status on workspaces"
+            hint="An icon on each sidebar workspace of a project with a dev container shows the container's state, and another flags a worktree that is at risk or broken."
+            value={current.workspaceBadges}
+            disabled={settings.saving}
+            onValueChange={(workspaceBadges) => void save({ workspaceBadges })}
+          />
+          <SettingsSwitch
+            label="Show the container's name"
+            hint="Write the dev container's name beside its icon on the workspaces in it."
+            value={current.workspaceBadges && current.workspaceBadgeNames}
+            disabled={settings.saving || !current.workspaceBadges}
+            onValueChange={(workspaceBadgeNames) => void save({ workspaceBadgeNames })}
+          />
+        </SettingsCard>
+      </SettingsSection>
+
       <SettingsSection title="Builds">
         <SettingsCard>
           <SettingsSwitch

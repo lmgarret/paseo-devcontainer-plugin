@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import type { Container, Guard, GuardWorktree } from "../shared/contract";
+import { StatusIcon, worktreeStatus } from "./status-icon";
 import { openGuide } from "./guide";
 import { HoverPressable } from "./hover";
 import { guardBadge, STATUS_KEY, useGuardPreview, useRestoreWorktrees, useStatusQuery } from "./state";
@@ -67,7 +68,7 @@ export function IssueBadge({
             backgroundColor: `${color}24`,
           }}
         >
-          <Icon name="TriangleAlert" size={12} color={color} />
+          <StatusIcon spec={worktreeStatus(broken > 0 ? "broken" : "at-risk")} theme={theme} size={13} />
           <Text style={{ color, fontSize: 11, fontWeight: "600", fontVariant: ["tabular-nums"] }}>{broken + atRisk}</Text>
         </View>
       </WithTooltip>
@@ -123,7 +124,7 @@ export function ProblemButton({
             backgroundColor: hovered ? theme.colors.surface1 : "transparent",
           }}
         >
-          <Icon name={broken ? "OctagonAlert" : "TriangleAlert"} size={12} color={color} />
+          <StatusIcon spec={worktreeStatus(entry.state)} theme={theme} size={13} />
           <Text style={{ color, fontSize: 12 }}>{broken ? "Git broken" : "At risk"}</Text>
         </Pressable>
       </WithTooltip>
@@ -178,7 +179,7 @@ function FixModal({
   return (
     <Modal
       title={heading}
-      icon={<Icon name={broken ? "OctagonAlert" : "TriangleAlert"} size={16} color={broken ? theme.colors.statusDanger : theme.colors.statusWarning} />}
+      icon={<StatusIcon spec={worktreeStatus(entry.state)} theme={theme} size={16} />}
       open
       onOpenChange={(open) => (open ? undefined : onClose())}
     >

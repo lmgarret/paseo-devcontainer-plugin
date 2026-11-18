@@ -58,9 +58,24 @@ export function useTooltip(delayMs: number, onChange?: (shown: boolean) => void)
 
 // An opaque bubble. On the web it is fixed in the window beside its anchor, centred and kept on
 // screen, below it or above when there is no room; elsewhere it sits under the anchor.
-export function TooltipBubble({ theme, text, anchor }: { theme: Theme; text: string; anchor: Anchor | null }) {
+// "above" sits just over the anchor, positioned from it rather than the window, for anchors in
+// containers that move or transform, such as Paseo's sidebar rows: a window-fixed bubble lands far
+// off there, and below the anchor the next rows paint over it.
+export function TooltipBubble({
+  theme,
+  text,
+  anchor,
+  placement = "auto",
+}: {
+  theme: Theme;
+  text: string;
+  anchor: Anchor | null;
+  placement?: TooltipPlacement;
+}) {
   let place: ViewStyle = { position: "absolute", top: (anchor?.height ?? 20) + GAP, left: 0, width: WIDTH };
-  if (Platform.OS === "web" && anchor) {
+  if (placement === "above") {
+    place = { position: "absolute", bottom: (anchor?.height ?? 16) + GAP, left: 0, width: WIDTH };
+  } else if (Platform.OS === "web" && anchor) {
     const { width: screenWidth, height: screenHeight } = Dimensions.get("window");
     const left = Math.min(Math.max(8, anchor.x + anchor.width / 2 - WIDTH / 2), screenWidth - WIDTH - 8);
     const below = anchor.y + anchor.height + GAP;
@@ -73,7 +88,7 @@ export function TooltipBubble({ theme, text, anchor }: { theme: Theme; text: str
     };
   }
   return (
-    <View pointerEvents="none" style={[place, { alignItems: "center", zIndex: 1000 }]}>
+    <View pointerEvents="none" style={[place, { alignItems: placement === "above" ? "flex-start" : "center", zIndex: 1000 }]}>
       <View
         style={{
           maxWidth: WIDTH,
@@ -82,7 +97,7 @@ export function TooltipBubble({ theme, text, anchor }: { theme: Theme; text: str
           borderRadius: 6,
           borderWidth: 1,
           borderColor: theme.colors.border,
-          backgroundColor: theme.colors.surface0,
+          backgroundColor: opaque(theme.colors.surface0),
           shadowColor: "#000",
           shadowOpacity: 0.45,
           shadowRadius: 12,
@@ -95,6 +110,15 @@ export function TooltipBubble({ theme, text, anchor }: { theme: Theme; text: str
   );
 }
 
+export type TooltipPlacement = "auto" | "above";
+
+// Drops a colour's alpha, so text behind the bubble never shows through.
+function opaque(color: string): string {
+  if (/^#[0-9a-f]{8}$/i.test(color)) return color.slice(0, 7);
+  const rgba = /^rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,[^)]*\)$/i.exec(color);
+  return rgba ? `rgb(${rgba[1]}, ${rgba[2]}, ${rgba[3]})` : color;
+}
+
 // Shows `text` on hover. Presses go to `onPress`, so wrapping part of a pressable row keeps the row
 // working.
 export function WithTooltip({
@@ -102,11 +126,13 @@ export function WithTooltip({
   text,
   children,
   onPress,
+  placement,
 }: {
   theme: Theme;
   text: string;
   children: ReactNode;
   onPress?: () => void;
+  placement?: TooltipPlacement;
 }) {
   const tip = useTooltip(TOOLTIP_DELAY_MS);
   return (
@@ -114,7 +140,7 @@ export function WithTooltip({
       <View ref={tip.ref} collapsable={false}>
         {children}
       </View>
-      {tip.shown ? <TooltipBubble theme={theme} text={text} anchor={tip.anchor} /> : null}
+      {tip.shown ? <TooltipBubble theme={theme} text={text} anchor={tip.anchor} placement={placement} /> : null}
     </Pressable>
   );
 }
