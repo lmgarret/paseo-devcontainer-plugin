@@ -3,6 +3,7 @@ import { Icon, SidebarRow, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
+import { logoStatus } from "./status-icon";
 import { ContainerRow } from "./actions";
 import { IssueBadge } from "./worktrees";
 import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
@@ -270,21 +271,15 @@ export function DevcontainerSidebarItem({ theme, currentScreen, openPopover }: P
 
   return (
     <SidebarRow
-      icon={DEVCONTAINERS_ICON}
+      icon={logoStatus(lead, theme.colors) ?? DEVCONTAINERS_ICON}
       label={label}
       active={currentScreen?.screenId === SCREEN_ID}
       onPress={() => openPopover(ContainersPopover)}
       trailing={
         <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginRight: 4 }}>
           {issues.broken + issues.atRisk > 0 ? <IssueBadge theme={theme} counts={issues} /> : null}
-          {busy ? (
-            <ActivityIndicator size="small" color={kindColor("busy", theme)} />
-          ) : lead ? (
-            <View
-              accessibilityLabel={lead.label}
-              style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: kindColor(lead.kind, theme) }}
-            />
-          ) : null}
+          {/* The icon carries the lead container's state; the spinner shows work in progress. */}
+          {busy ? <ActivityIndicator size="small" color={kindColor("busy", theme)} /> : null}
         </View>
       }
     />

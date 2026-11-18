@@ -2,6 +2,7 @@ import { type PluginScreenParams, type PluginScreenProps, useSettings } from "@g
 import { Icon, Loading, ScrollView, useToast } from "@getpaseo/plugin/client/ui";
 import { useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
+import { containerStatus, StatusIcon } from "./status-icon";
 import { CARD_INDENT, ContainerRow, LEAD } from "./actions";
 import { DEVCONTAINERS_ICON } from "./devcontainers-icon";
 import { FolderIcon, ProjectIcon } from "./project-icon";
@@ -12,7 +13,6 @@ import {
   appForwards,
   type ContainerView,
   groupByProject,
-  kindColor,
   sortActive,
   useDevcontainers,
   type WorkspaceTarget,
@@ -123,7 +123,6 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
       },
       hovered: { backgroundColor: theme.colors.surface2 },
       dots: { flexDirection: "row" as const, gap: 4, marginLeft: "auto" as const, paddingRight: 4 },
-      dot: { width: 6, height: 6, borderRadius: 3 },
       project: { color: theme.colors.foregroundMuted, fontSize: 13, fontWeight: "500" as const, flexShrink: 1 },
       path: { color: theme.colors.foregroundMuted, fontSize: 11, opacity: 0.7, flexShrink: 2 },
     }),
@@ -339,11 +338,9 @@ export function ContainersScreen(props: PluginScreenProps & { openSettings(): vo
                         // Folded groups keep a glance of their containers' states.
                         <View style={styles.dots}>
                           {group.views.map((view) => (
-                            <View
-                              key={view.container.repoPath}
-                              accessibilityLabel={`${view.container.name}: ${view.label}`}
-                              style={[styles.dot, { backgroundColor: kindColor(view.kind, theme) }]}
-                            />
+                            <View key={view.container.repoPath} accessibilityLabel={`${view.container.name}: ${view.label}`}>
+                              <StatusIcon spec={containerStatus(view)} theme={theme} size={13} />
+                            </View>
                           ))}
                         </View>
                       ) : null}

@@ -32,7 +32,7 @@ export function managedHome(settings: DevcontainerSettings, repoPath: string, co
 
 // Whether any companion module has work to do.
 export function wantsCompanion(settings: DevcontainerSettings): boolean {
-  return settings.guardWorktrees || settings.mirrorHostPlugins;
+  return settings.guardWorktrees || settings.mirrorHostPlugins || settings.workspaceBadges;
 }
 
 function companionDir(home: string, id = COMPANION_ID): string {
@@ -47,13 +47,15 @@ function companionFiles(source: string): Record<string, string> {
         id: COMPANION_ID,
         name: "Dev container companion",
         description:
-          "Restores git worktree records that an archive in this container deletes for the host's worktrees, and installs the host's plugins.",
+          "Restores git worktree records that an archive in this container deletes for the host's worktrees, installs the host's plugins, and shows the container's status on its workspaces.",
         requirements: { paseo: ">=0.15.0" },
       },
       null,
       2,
     )}\n`,
     "index.server.ts": 'export { default } from "./server/companion";\n',
+    "index.client.tsx": 'export { default } from "./client/companion";\n',
+    "client/companion.tsx": read("client/companion.tsx"),
     "server/companion.ts": read("server/companion.ts"),
     "server/companion-guard.ts": read("server/companion-guard.ts"),
     "server/companion-plugins.ts": read("server/companion-plugins.ts"),

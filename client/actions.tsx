@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Pressable, Text, View } from "react-native";
 import { ACTION_LABELS } from "../shared/contract";
+import { containerStatus, StatusIcon } from "./status-icon";
 import { PortPills } from "./ports";
 import { TOOLTIP_DELAY_MS, TooltipBubble, useTooltip } from "./tooltip";
 import { IssueBadge } from "./worktrees";
@@ -116,7 +117,6 @@ export function ContainerRow({
       hovered: { backgroundColor: theme.colors.surface2 },
       line: { flexDirection: "row" as const, alignItems: "center" as const, gap: 10, minHeight: layout.compact ? 36 : 26 },
       lead: { width: 16, alignItems: "center" as const, justifyContent: "center" as const },
-      dot: { width: 7, height: 7, borderRadius: 4 },
       text: { flex: 1, minWidth: 0, flexDirection: "row" as const, alignItems: "baseline" as const, gap: 6 },
       // The name keeps its width; the muted context truncates first.
       name: { color: theme.colors.foreground, fontSize: 14, flexShrink: 0, maxWidth: "70%" as const },
@@ -213,7 +213,9 @@ export function ContainerRow({
     view.kind === "busy" ? (
       <ActivityIndicator size="small" color={color} style={{ transform: [{ scale: 0.55 }] }} />
     ) : (
-      <View accessibilityLabel={view.label} style={[styles.dot, { backgroundColor: color }]} />
+      <View accessibilityLabel={view.label}>
+        <StatusIcon spec={containerStatus(view)} theme={theme} size={15} />
+      </View>
     );
 
   return (

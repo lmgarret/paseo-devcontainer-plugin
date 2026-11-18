@@ -419,6 +419,7 @@ export class DevcontainerController {
         return {
           repoPath: candidate.repoPath,
           name: candidate.name,
+          devcontainerName: candidate.devcontainerName,
           source: candidate.source,
           project: candidate.project
             ? {
@@ -456,6 +457,8 @@ export class DevcontainerController {
       dockerError,
       tools,
       notices: [...this.notices],
+      workspaceBadges: settings.workspaceBadges,
+      workspaceBadgeNames: settings.workspaceBadgeNames,
       machine: {
         name: hostname().replace(/\.local$/, "") || "This machine",
         platform: process.platform,

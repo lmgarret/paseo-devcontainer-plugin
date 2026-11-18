@@ -6,6 +6,9 @@ import { ACTION_META } from "./client/actions";
 import { DEVCONTAINERS_ICON } from "./client/devcontainers-icon";
 import { GUIDE_SCREEN_ID, GuideScreen, setGuideOpener } from "./client/guide";
 import { commandActions, type UiAction } from "./client/state";
+import { ContainerBadge, WorktreeBadge } from "./client/badges";
+import { publishStatus } from "./client/live-status";
+import { provideBadges } from "./client/companion";
 import { type Container, openLogsRpc, openShellRpc, runActionRpc, statusRpc, statusSubscription } from "./shared/contract";
 
 const SETTINGS_ID = "settings";
@@ -23,6 +26,15 @@ export default function contribute(client: PluginClientContext) {
   setGuideOpener(() => client.openScreen({ screenId: GUIDE_SCREEN_ID }));
   client.addScreen({ id: GUIDE_SCREEN_ID, title: "Worktrees shared with dev containers", Component: GuideScreen });
   client.addSidebarFooterItem({ id: "devcontainers", title: "Dev containers", Component: DevcontainerSidebarItem });
+  // The container badge only shows on a container's workspaces, which the companion plugin badges.
+  client.addWorkspaceRowBadgeItem({
+    id: "worktree",
+    title: "Shared worktree problems",
+    icon: "GitBranch",
+    Component: WorktreeBadge,
+  });
+  // The companion plugin badges container workspaces with the same components.
+  const withdrawBadges = provideBadges({ container: ContainerBadge, worktree: WorktreeBadge });
   client.addSettingsScreen({
     id: SETTINGS_ID,
     title: "Dev containers",
@@ -109,7 +121,9 @@ export default function contribute(client: PluginClientContext) {
   const refresh = async () => {
     try {
       const status = await client.rpc(statusRpc, {});
-      if (!stopped) sync(status.containers);
+      if (stopped) return;
+      publishStatus(status);
+      sync(status.containers);
     } catch {
       // Host offline or plugin reloading; keep the last items.
     }
@@ -121,7 +135,9 @@ export default function contribute(client: PluginClientContext) {
       statusSubscription,
       {},
       (event) => {
-        if (!stopped && event.status) sync(event.status.containers);
+        if (stopped || !event.status) return;
+        publishStatus(event.status);
+        sync(event.status.containers);
       },
       {
         onClosed: () => {
@@ -137,6 +153,7 @@ export default function contribute(client: PluginClientContext) {
 
   return () => {
     stopped = true;
+    withdrawBadges();
     if (retryTimer) clearTimeout(retryTimer);
     release?.();
     for (const remove of commands.values()) remove();

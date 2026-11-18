@@ -67,6 +67,10 @@ export const settingsDefinition = defineSettings({
     hidden: z.array(z.string()).default([]),
     // Project groups folded on the "All dev containers" page.
     collapsedGroups: z.array(z.string()).default([]),
+    // Container and shared-worktree status icons on the sidebar's workspace rows.
+    workspaceBadges: z.boolean().default(true),
+    // The container's name beside its icon on those rows.
+    workspaceBadgeNames: z.boolean().default(false),
   }),
   migrate(values, fromVersion) {
     if (fromVersion !== 1 || typeof values !== "object" || values === null) return {};
@@ -172,7 +176,10 @@ export type GuardWorktree = z.infer<typeof guardWorktreeSchema>;
 const containerSchema = z.object({
   // Identity: the repository folder, as in the `devcontainer.local_folder` label.
   repoPath: z.string(),
+  // The Paseo project's name, or the folder's.
   name: z.string(),
+  // The `name` its devcontainer.json sets.
+  devcontainerName: z.string().nullable(),
   source: z.enum(["project", "container", "extra"]),
   // The Paseo project on this host the folder belongs to, as a root checkout or a workspace.
   project: z
@@ -221,6 +228,9 @@ const statusSchema = z.object({
   dockerError: z.string().nullable(),
   tools: z.object({ docker: z.string().nullable(), devcontainer: z.string().nullable() }),
   notices: z.array(noticeSchema),
+  // The workspaces badges setting, for the companion plugin's badges, which cannot read settings.
+  workspaceBadges: z.boolean(),
+  workspaceBadgeNames: z.boolean(),
   // The machine this plugin's daemon runs on: its name and Node's platform, for labels and icons.
   // `serverId` names the Paseo host, whose label the app shows.
   machine: z.object({ name: z.string(), platform: z.string(), serverId: z.string().nullable() }),
