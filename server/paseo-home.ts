@@ -18,7 +18,8 @@ export interface PaseoHomePlan {
   home: string;
   // This machine's Paseo worktrees for the repository, mounted at the same path; null when unknown.
   hostWorktrees: string | null;
-  // `devcontainer up --mount` values.
+  // `devcontainer up --mount` values, also for this machine's uploads, desktop attachments, and
+  // handovers, at the same path.
   mounts: string[];
 }
 
@@ -32,7 +33,7 @@ export function planPaseoHome(settings: DevcontainerSettings, repoPath: string, 
     const home = claimHome(realpathSync(root), repoPath);
     const hostWorktrees = hostWorktreesFor(repoPath);
     const mounts: string[] = [];
-    for (const path of [home, hostWorktrees]) {
+    for (const path of [home, hostWorktrees, ...sharedHostFolders()]) {
       if (!path) continue;
       // `--mount` is comma separated, with no escaping.
       if (path.includes(",")) {
@@ -93,6 +94,20 @@ function hostWorktreesFor(repoPath: string): string | null {
   // A missing bind source fails the container's creation.
   mkdirSync(dir, { recursive: true });
   return realpathSync(dir);
+}
+
+// Folders of this machine's Paseo home whose files agents in the container are pointed at: files
+// attached in the app, which go to this machine's daemon, and handover briefs. The devcontainer CLI
+// cannot mount them read-only.
+const SHARED_HOST_FOLDERS = ["uploads", "desktop-attachments", "handovers"];
+
+function sharedHostFolders(): string[] {
+  return SHARED_HOST_FOLDERS.map((name) => {
+    const dir = join(hostPaseoHome(), name);
+    // A missing bind source fails the container's creation.
+    mkdirSync(dir, { recursive: true });
+    return realpathSync(dir);
+  });
 }
 
 // The daemon's `worktrees.root` setting, else <home>/worktrees.
