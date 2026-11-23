@@ -60,9 +60,10 @@ Settings:
 
 ## Paseo home and worktrees
 
-When a container is created, the plugin mounts its Paseo home folder at the same absolute path inside the container, links the container's `~/.paseo` to it, and sets that daemon's `worktrees.root` to the folder's `worktrees`. It also mounts this machine's Paseo worktrees for the repository at their own path. So:
+When a container is created, the plugin mounts its Paseo home folder at the same absolute path inside the container, links the container's `~/.paseo` to it, and sets that daemon's `worktrees.root` to the folder's `worktrees`. It also mounts this machine's Paseo worktrees for the repository, and its `uploads`, `desktop-attachments`, and `handovers` folders, each at its own path. So:
 
 - the daemon keeps its server ID, pairing, and agents across rebuilds;
+- files you attach in the app, which Paseo saves on this machine, and handover briefs written here can be opened by the container's agents;
 - every Paseo worktree has the same path on this machine and in the container. Git records each worktree's absolute path in the repository's shared `.git`, and `git worktree prune`, which Paseo runs whenever it archives a worktree, deletes the record of any worktree it cannot see. With different paths on each side, archiving on one side broke the other side's worktrees.
 
 The plugin leaves the home alone when the dev container config sets `PASEO_HOME`, and keeps `~/.paseo` when it already holds another daemon's data.
