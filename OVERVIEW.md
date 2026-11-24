@@ -15,11 +15,11 @@ Each container is linked to its Paseo project and workspace on this host, and sh
 A "Dev containers" row in the sidebar footer shows how many containers run. Its popover lists up to five active containers, those running, busy, paired with the app, or left without a container by a failed build, with a status dot and icon actions:
 
 - start, stop, and rebuild, with stop and rebuild asking for confirmation because agents in the container stop with it. The rebuild confirmation also offers a rebuild without the image cache;
-- logs: a Paseo terminal in the project's workspace following the latest job's full log. Rebuilds, and starts that create a container, open it on their own;
+- logs: a Paseo terminal in the project's workspace following the latest job's full log, or the one already open. Rebuilds, and starts that create a container, open a fresh one on their own;
 - rebuild in every state but while a job runs, including containers built by VS Code or the `devcontainer` CLI;
 - after a failed build that removed the container, retry, rebuild, the log, and dismiss;
 - start the Paseo daemon when it is down, or install Paseo when it is missing;
-- open a shell: a Paseo terminal in the project's workspace running `docker exec` into the container.
+- open a shell: a Paseo terminal in the project's workspace running `docker exec` into the container, or the one already open.
 
 Workspaces on a container's own Paseo host show a container icon with a small status mark: running, stopped, never built, busy, failed, or needing attention. A workspace whose worktree is at risk or broken, on this machine or in a container, also shows a git branch icon with a warning or error mark. The companion plugin draws the icons on a container's workspaces, since Paseo lets a plugin mark only its own host's workspaces; it needs the Paseo home kept on this machine, and reaches a running container at its next start or rebuild. Each icon can be hidden from the sidebar's Show menu, and both from the plugin's settings.
 
@@ -27,7 +27,7 @@ Pressing a row opens the "All dev containers" page with that container shown. Wh
 
 The sidebar, the "All dev containers" page and the Command Center update as soon as something changes: a job's progress, a container starting or stopping, a port detected, a worktree check. Changes made outside Paseo, such as `docker stop`, show within about 5 seconds. If the live connection to the plugin drops, the app reads the status every 15 seconds until it reconnects.
 
-The "All dev containers" page sums up what runs, what is paired, and how many ports are forwarded. Running containers come first, as cards that open on their details: its project's workspaces on the container's own Paseo host, most urgent first, each opening on that host; its forwarded ports; and its Paseo daemon. Pressing a card's header folds it. Other containers follow as a compact list grouped by project, with their start action, and any container can be hidden from the sidebar.
+The "All dev containers" page sums up what runs, what is paired, and how many ports are forwarded. Running containers come first, as cards that open on their details: its project's workspaces on the container's own Paseo host, live and most urgent first, each opening on that host; its forwarded ports; and its Paseo daemon. Pressing a card's header folds it. Other containers follow as a compact list grouped by project, with their start action, and any container can be hidden from the sidebar.
 
 ## Port forwarding
 

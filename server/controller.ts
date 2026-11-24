@@ -8,7 +8,9 @@ import {
   type Container,
   type DevcontainerSettings,
   type Job,
+  logTerminalName,
   type Notice,
+  shellTerminalName,
   type Status,
 } from "../shared/contract";
 import { PortForwarder } from "./forwarder";
@@ -251,7 +253,7 @@ export class DevcontainerController {
       "-c",
       `${USE_SSH_AGENT}if command -v bash >/dev/null; then exec bash -l; else exec sh -l; fi`,
     );
-    return { name: `${candidate.name} (container)`, command: tools.docker, args };
+    return { name: shellTerminalName(candidate.name), command: tools.docker, args };
   }
 
   // Whether the folder has no container yet, so starting it builds one.
@@ -264,9 +266,8 @@ export class DevcontainerController {
   logCommand(repoPath: string): { name: string; command: string; args: string[] } {
     const file = logFile(repoPath);
     if (!existsSync(file)) throw new Error("No log yet for this dev container");
-    const name = repoPath.split("/").filter(Boolean).pop() ?? repoPath;
     // -F reopens the file when a new job replaces it.
-    return { name: `${name} (dev container log)`, command: "/bin/sh", args: ["-c", 'exec tail -n +1 -F "$1"', "sh", file] };
+    return { name: logTerminalName(repoPath), command: "/bin/sh", args: ["-c", 'exec tail -n +1 -F "$1"', "sh", file] };
   }
 
   dismiss(repoPath: string): void {

@@ -271,6 +271,15 @@ export const dismissJobRpc = defineRpc({
   output: z.object({}),
 });
 
+// The names of the terminals shell and logs open, by which the app finds one already open.
+export function shellTerminalName(containerName: string): string {
+  return `${containerName} (container)`;
+}
+
+export function logTerminalName(repoPath: string): string {
+  return `${repoPath.split("/").filter(Boolean).pop() ?? repoPath} (dev container log)`;
+}
+
 export const openShellRpc = defineRpc({
   name: "shell.open",
   input: z.object({ repoPath: z.string() }),
