@@ -9,6 +9,7 @@ import { PortPills } from "./ports";
 import { TOOLTIP_DELAY_MS, TooltipBubble, useTooltip } from "./tooltip";
 import { IssueBadge } from "./worktrees";
 import { FolderIcon, ProjectIcon } from "./project-icon";
+import { rememberTerminal, useContainerTerminals } from "./terminals";
 import {
   type ContainerView,
   type DevcontainersState,
@@ -68,6 +69,8 @@ interface ContainerRowProps extends Pick<PluginHostProps, "theme" | "layout"> {
   variant: "popover" | "page" | "card";
   // Receives the workspace holding a new shell or log terminal.
   onOpenWorkspace(workspaceId: string): void;
+  // After focusing a shell or log terminal already open, e.g. to close the popover.
+  onFocusTerminal?: () => void;
   // Pressing the row: the page expands it, the popover shows it on the page. A container hosts
   // many workspaces, so the row never guesses one to open.
   onPress?: () => void;
@@ -88,6 +91,7 @@ export function ContainerRow({
   state,
   variant,
   onOpenWorkspace,
+  onFocusTerminal,
   onPress,
   pressLabel,
   onToggleHidden,
@@ -105,6 +109,12 @@ export function ContainerRow({
   // Hovering the row itself shows its full, untruncated text.
   const rowTooltip = useTooltip(ROW_TOOLTIP_DELAY_MS);
   const { container } = view;
+  // Shell and logs focus a terminal already open for this container rather than open another.
+  const terminals = useContainerTerminals(
+    hostId,
+    container,
+    view.actions.includes("shell") || view.actions.includes("logs"),
+  );
   // Cards are page rows that lead the running section with their project's icon and name.
   const card = variant === "card";
   const page = variant !== "popover";
@@ -135,9 +145,14 @@ export function ContainerRow({
     setConfirming(null);
     try {
       if (action === "shell" || action === "logs") {
+        if (terminals.focus(action)) {
+          onFocusTerminal?.();
+          return;
+        }
         setOpening(true);
         const open = action === "shell" ? openShell : openLogs;
-        const { workspaceId } = await open({ repoPath: container.repoPath });
+        const { workspaceId, terminalId } = await open({ repoPath: container.repoPath });
+        rememberTerminal(container.repoPath, action, terminalId);
         onOpenWorkspace(workspaceId);
       } else if (action === "dismiss") {
         await dismissJob({ repoPath: container.repoPath });
@@ -236,6 +251,7 @@ export function ContainerRow({
       style={[styles.row, hovered && styles.hovered]}
     >
       {rowTooltip.shown ? <TooltipBubble theme={theme} text={fullText} anchor={rowTooltip.anchor} /> : null}
+      {terminals.probe}
       <View style={styles.line}>
         {expandable ? (
           <View style={styles.lead}>
