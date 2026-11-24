@@ -5,10 +5,10 @@ Start, stop, and rebuild your dev containers from Paseo, open a shell in them, a
 The plugin lists:
 
 - every Paseo project on this host with a `.devcontainer/devcontainer.json` or `.devcontainer.json`, even if its container was never built;
-- every running container created by VS Code or the `devcontainer` CLI, and stopped ones whose folder is still a Paseo workspace;
+- every running container created by VS Code or the `devcontainer` CLI, and stopped ones whose folder is still a Paseo workspace, or linked to one;
 - repositories you add in settings.
 
-Each container is linked to its Paseo project and workspace on this host, and shown with the project's icon. The Paseo daemon inside a container is matched to the host you paired in the app by its server ID, read from the daemon while the container runs, or from the `server-id` file when its Paseo home is mounted from this machine.
+Each container is linked to its Paseo project and workspaces on this host, and shown with the project's icon. On Paseo 0.16 and later, a workspace created for a repository with a dev container, on this machine or in the container, records that repository in its workspace metadata, under keys starting with `devcontainer.`. The worktree guard, the container's cards, and the sidebar icons use that record first, and match other workspaces, such as ones created earlier or on an older Paseo, by project and folder as before. In the container, the companion plugin does the tagging; it needs the Paseo home kept on this machine, and reaches a running container at its next start or rebuild. The Paseo daemon inside a container is matched to the host you paired in the app by its server ID, read from the daemon while the container runs, or from the `server-id` file when its Paseo home is mounted from this machine.
 
 ## What you get
 

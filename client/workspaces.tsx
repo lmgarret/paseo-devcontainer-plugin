@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { SectionHeading } from "./ports";
 import type { GuardWorktree } from "../shared/contract";
+import { useWorkspaceLinks } from "./links";
 import type { ContainerView, WorkspaceTarget } from "./state";
 import { ProblemButton, slugOf, worktreeProblems } from "./worktrees";
 
@@ -41,9 +42,13 @@ export function ContainerWorkspaces({ theme, layout, view, onOpen }: ContainerWo
   const [showAll, setShowAll] = useState(false);
   const { project, workspaceFolder } = view.container;
   const keyed = useProjectsWithKey(hostId, online, project?.key ?? null);
-  // Git projects share their ID and key across hosts; the mounted folder covers the rest.
+  const links = useWorkspaceLinks(hostId, online);
+  // The container its metadata names first. Without one, git projects share their ID and key
+  // across hosts, and the mounted folder covers the rest.
   const ours = (workspace: Workspace) =>
-    workspace.projectId === project?.id || keyed.has(workspace.projectId) || workspace.projectRootPath === workspaceFolder;
+    links.has(workspace.id)
+      ? links.get(workspace.id) === view.container.repoPath
+      : workspace.projectId === project?.id || keyed.has(workspace.projectId) || workspace.projectRootPath === workspaceFolder;
   // Workspaces whose worktree is broken or at risk lead the list, in place of their plain row.
   const problems = worktreeProblems(view.container.guard);
   const problemKeys = new Set(problems.map((problem) => problemKey(problem.folder)));

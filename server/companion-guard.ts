@@ -9,6 +9,8 @@ import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { readWorkspaceLink } from "../shared/workspace-link";
+import { readContainerLink } from "./companion-links";
 import {
   AUTOMATIC_FIXES,
   classify,
@@ -89,7 +91,14 @@ export function startGuard(server: PluginServerContext): () => void {
   };
   void safely(refresh)();
   const unsubscribe = [
-    server.addHook("workspace.archive.after", ({ workspace }) => safely(() => afterArchive(workspace.cwd))()),
+    server.addHook("workspace.archive.after", ({ workspace }) => {
+      // A workspace linked to another repository: its archive pruned that one, not this one.
+      // Without a link, any archive may have.
+      const link = readWorkspaceLink(workspace.metadata);
+      const repoPath = readContainerLink()?.repoPath;
+      if (link && repoPath && link.repoPath !== repoPath) return Promise.resolve();
+      return safely(() => afterArchive(workspace.cwd))();
+    }),
     server.addHook("workspace.create.after", () => safely(refresh)()),
   ];
   return () => {

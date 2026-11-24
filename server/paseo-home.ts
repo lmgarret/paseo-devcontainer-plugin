@@ -7,8 +7,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { DevcontainerSettings } from "../shared/contract";
+import { repoRootOf } from "./worktree-guard";
 
 // Written in each managed Paseo home: claims it for one repository, and marks its mount for discovery.
 export const HOME_MARKER = ".devcontainer-plugin.json";
@@ -116,28 +117,6 @@ export function worktreesRootOf(paseoHome: string): string {
   if (!configured) return join(paseoHome, "worktrees");
   const expanded = expandTilde(configured);
   return isAbsolute(expanded) ? resolve(expanded) : resolve(paseoHome, expanded);
-}
-
-// The main checkout of the repository, also for a linked worktree.
-export function repoRootOf(repoPath: string): string | null {
-  try {
-    const dotGit = join(repoPath, ".git");
-    let commonDir = dotGit;
-    const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
-    if (pointer?.[1]) {
-      const gitDir = resolve(repoPath, pointer[1].trim());
-      const common = existsSync(join(gitDir, "commondir")) ? readFileSync(join(gitDir, "commondir"), "utf8").trim() : "";
-      commonDir = common ? resolve(gitDir, common) : gitDir;
-    }
-    const real = realpathSync(commonDir);
-    return basename(real) === ".git" ? dirname(real) : real;
-  } catch (error) {
-    // EISDIR: a regular checkout, whose .git is a folder.
-    if ((error as NodeJS.ErrnoException).code === "EISDIR") {
-      return realpathSync(repoPath);
-    }
-    return null;
-  }
 }
 
 export function paseoProjectHash(value: string): string {

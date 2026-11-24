@@ -1,7 +1,7 @@
 /// <reference types="node" />
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { Container, DevcontainerSettings } from "../shared/contract";
+import type { Container, DevcontainerSettings, WorkspaceLink } from "../shared/contract";
 import { HOME_MARKER } from "./paseo-home";
 import { run, toolEnv } from "./process";
 
@@ -21,6 +21,8 @@ export interface WorkspaceRef {
   directory: string;
   title: string;
   branch: string | null;
+  // The container its metadata links it to; null without metadata.
+  link: WorkspaceLink | null;
 }
 
 export interface PaseoCatalog {
@@ -57,6 +59,8 @@ export interface Candidate {
   container: DockerContainer | null;
   project: ProjectRef | null;
   workspace: WorkspaceRef | null;
+  // Workspaces whose metadata links them to this repository's container.
+  linked: WorkspaceRef[];
   branch: string | null;
 }
 
@@ -253,7 +257,8 @@ function branchFromHead(head: string): string | null {
 }
 
 // One candidate per repository folder, from Paseo projects, extra paths, and existing containers.
-// Stopped containers are listed only when their folder is a project or a Paseo workspace.
+// Stopped containers are listed only when their folder is a project or a Paseo workspace, or a
+// workspace's metadata links to them.
 export function mergeCandidates(
   settings: DevcontainerSettings,
   catalog: PaseoCatalog,
@@ -276,6 +281,10 @@ export function mergeCandidates(
   const workspaceByDir = new Map(catalog.workspaces.map((workspace) => [workspace.directory, workspace]));
   const projectById = new Map(catalog.projects.map((project) => [project.projectId, project]));
   const projectByRoot = new Map(catalog.projects.map((project) => [project.rootPath, project]));
+  const linkedByRepo = new Map<string, WorkspaceRef[]>();
+  for (const workspace of catalog.workspaces) {
+    if (workspace.link) linkedByRepo.set(workspace.link.repoPath, [...(linkedByRepo.get(workspace.link.repoPath) ?? []), workspace]);
+  }
 
   const candidates = new Map<string, Candidate>();
   const add = (repoPath: string, source: Candidate["source"]) => {
@@ -284,7 +293,13 @@ export function mergeCandidates(
     const configFile = container?.configFile ?? findConfig(repoPath);
     if (!container && !configFile) return;
     const workspace = workspaceByDir.get(repoPath) ?? null;
-    const project = (workspace && projectById.get(workspace.projectId)) || projectByRoot.get(repoPath) || null;
+    const linked = linkedByRepo.get(repoPath) ?? [];
+    // A linked workspace's project first; then the folder's workspace or project.
+    const project =
+      linked.map((entry) => projectById.get(entry.projectId)).find(Boolean) ||
+      (workspace && projectById.get(workspace.projectId)) ||
+      projectByRoot.get(repoPath) ||
+      null;
     candidates.set(repoPath, {
       repoPath,
       name: project?.name ?? basename(repoPath),
@@ -294,6 +309,7 @@ export function mergeCandidates(
       container,
       project,
       workspace,
+      linked,
       branch: workspace?.branch ?? readBranch(repoPath),
     });
   };
@@ -303,7 +319,9 @@ export function mergeCandidates(
   }
   for (const repoPath of settings.extraRepoPaths) add(repoPath, "extra");
   for (const container of byFolder.values()) {
-    if (container.running || workspaceByDir.has(container.localFolder)) add(container.localFolder, "container");
+    if (container.running || workspaceByDir.has(container.localFolder) || linkedByRepo.has(container.localFolder)) {
+      add(container.localFolder, "container");
+    }
   }
   for (const repoPath of keep) add(repoPath, "container");
   return [...candidates.values()].sort(
