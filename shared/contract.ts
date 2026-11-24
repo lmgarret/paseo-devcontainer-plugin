@@ -1,6 +1,9 @@
 import { defineRpc, defineSettings, defineSubscription } from "@getpaseo/plugin";
 import { z } from "zod";
 
+// Workspace metadata keys, kept in a file without imports so the companion plugin can use them.
+export * from "./workspace-link";
+
 // npm 11 skips dependency install scripts unless allowed; node-pty needs its build for terminals.
 export const DEFAULT_INSTALL_COMMAND = "npm install -g --allow-scripts=esbuild,node-pty,msgpackr-extract @getpaseo/cli";
 
@@ -194,6 +197,8 @@ const containerSchema = z.object({
     .nullable(),
   // This host's Paseo workspace for the folder, when there is one.
   workspace: z.object({ id: z.string(), title: z.string() }).nullable(),
+  // This host's workspaces whose metadata links them to the container (see workspace-link.ts).
+  linkedWorkspaceIds: z.array(z.string()),
   branch: z.string().nullable(),
   // The folder's path inside the container.
   workspaceFolder: z.string().nullable(),

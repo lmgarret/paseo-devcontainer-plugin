@@ -12,7 +12,7 @@
 // Node built-ins only: this file is copied into the container's companion plugin, which has no
 // node_modules.
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 // Under the container's Paseo home, which both sides see at the same path.
@@ -757,6 +757,28 @@ export function readGuardConfig(guardDir: string): GuardConfig | null {
       : [];
     return { hostRepo: parsed.hostRepo, containerRepo: parsed.containerRepo, guardDir, mounts };
   } catch {
+    return null;
+  }
+}
+
+// The main checkout of the repository, also for a linked worktree.
+export function repoRootOf(repoPath: string): string | null {
+  try {
+    const dotGit = join(repoPath, ".git");
+    let commonDir = dotGit;
+    const pointer = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotGit, "utf8"));
+    if (pointer?.[1]) {
+      const gitDir = resolve(repoPath, pointer[1].trim());
+      const common = existsSync(join(gitDir, "commondir")) ? readFileSync(join(gitDir, "commondir"), "utf8").trim() : "";
+      commonDir = common ? resolve(gitDir, common) : gitDir;
+    }
+    const real = realpathSync(commonDir);
+    return basename(real) === ".git" ? dirname(real) : real;
+  } catch (error) {
+    // EISDIR: a regular checkout, whose .git is a folder.
+    if ((error as NodeJS.ErrnoException).code === "EISDIR") {
+      return realpathSync(repoPath);
+    }
     return null;
   }
 }

@@ -7,11 +7,13 @@ import {
   openLogsRpc,
   openShellRpc,
   projectIconRpc,
+  readWorkspaceLink,
   runActionRpc,
   settingsDefinition,
   type Status,
   statusRpc,
   statusSubscription,
+  workspaceLinkMetadata,
   worktreesGuideRpc,
 } from "./shared/contract";
 import type { PaseoCatalog, WorkspaceRef } from "./server/discovery";
@@ -57,6 +59,7 @@ export default function contribute(server: PluginServerContext) {
             directory: entry.workspaceDirectory,
             title: entry.title || entry.name,
             branch: entry.gitRuntime?.currentBranch ?? null,
+            link: readWorkspaceLink(entry.metadata),
           });
         }
         if (!result.pageInfo.hasMore || !result.pageInfo.nextCursor) break;
@@ -102,10 +105,18 @@ export default function contribute(server: PluginServerContext) {
         .afterWorkspaceArchive(workspace)
         .catch((error: unknown) => console.error("[devcontainer-host] worktree repair after archive failed:", error));
     }),
+    // Also links the workspace to its repository's container in its metadata, unless the New
+    // workspace setup already did.
     server.addHook("workspace.create.after", async ({ workspace }, context) => {
       paseo = context.paseo;
+      const tag = async (repoPath: string) => {
+        await context.paseo.workspaces
+          .ref(workspace.id)
+          .setMetadata(workspaceLinkMetadata({ repoPath, side: "host" }))
+          .catch((error: unknown) => console.error("[devcontainer-host] could not link the workspace to its container:", error));
+      };
       await controller
-        .afterWorkspaceCreate(workspace)
+        .afterWorkspaceCreate(workspace, tag)
         .catch((error: unknown) => console.error("[devcontainer-host] worktree check after create failed:", error));
     }),
   ];

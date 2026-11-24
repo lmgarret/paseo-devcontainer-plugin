@@ -4,15 +4,17 @@
 // `devcontainer-companion` plugin; the host plugin itself never loads it. Each module does
 // nothing until the host plugin writes its data into the shared home:
 // - the worktree guard repairs git worktree records after archives in the container;
-// - the plugin mirror installs the host's plugins in this daemon.
+// - the plugin mirror installs the host's plugins in this daemon;
+// - the workspace links store the container's repository in its workspaces' metadata.
 //
 // Type imports and Node built-ins only: the copy has no node_modules.
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { startGuard } from "./companion-guard";
+import { startLinks } from "./companion-links";
 import { startPluginMirror } from "./companion-plugins";
 
 export default function contribute(server: PluginServerContext) {
-  const stops = [startGuard(server), startPluginMirror()];
+  const stops = [startGuard(server), startPluginMirror(), startLinks(server)];
   return () => {
     for (const stop of stops) stop();
   };

@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DevcontainerSettings, Guard } from "../shared/contract";
+import { type ContainerLink, LINK_FILE } from "./companion-links";
 import { COMPANION_DATA, type MirroredPlugin, PLUGINS_FILE, type PluginList } from "./companion-plugins";
 import type { DockerContainer } from "./discovery";
 import { homeOwner, homesRoot, readConfig, writeConfig } from "./paseo-home";
@@ -47,7 +48,7 @@ function companionFiles(source: string): Record<string, string> {
         id: COMPANION_ID,
         name: "Dev container companion",
         description:
-          "Restores git worktree records that an archive in this container deletes for the host's worktrees, installs the host's plugins, and shows the container's status on its workspaces.",
+          "Restores git worktree records that an archive in this container deletes for the host's worktrees, installs the host's plugins, links its workspaces to the container, and shows the container's status on them.",
         requirements: { paseo: ">=0.15.0" },
       },
       null,
@@ -59,7 +60,9 @@ function companionFiles(source: string): Record<string, string> {
     "server/companion.ts": read("server/companion.ts"),
     "server/companion-guard.ts": read("server/companion-guard.ts"),
     "server/companion-plugins.ts": read("server/companion-plugins.ts"),
+    "server/companion-links.ts": read("server/companion-links.ts"),
     "server/worktree-guard.ts": read("server/worktree-guard.ts"),
+    "shared/workspace-link.ts": read("shared/workspace-link.ts"),
   };
 }
 
@@ -135,6 +138,17 @@ export function writePluginList(home: string, plugins: MirroredPlugin[] | null):
   }
   const list: PluginList = { plugins };
   const content = `${JSON.stringify(list, null, 2)}\n`;
+  if (readText(file) !== content) writeAtomic(file, content);
+}
+
+// The repository the companion links its workspaces to; null removes it, so it links none.
+export function writeContainerLink(home: string, link: ContainerLink | null): void {
+  const file = join(home, COMPANION_DATA, LINK_FILE);
+  if (link === null) {
+    rmSync(file, { force: true });
+    return;
+  }
+  const content = `${JSON.stringify(link, null, 2)}\n`;
   if (readText(file) !== content) writeAtomic(file, content);
 }
 

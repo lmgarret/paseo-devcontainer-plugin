@@ -1,8 +1,8 @@
-import type { PluginTheme, PluginWorkspaceSnapshot } from "@getpaseo/plugin";
+import type { PluginTheme } from "@getpaseo/plugin";
 import { type PluginWorkspaceRowBadgeItemProps, useHosts, useWorkspace } from "@getpaseo/plugin/client";
 import { WorkspaceRowBadge } from "@getpaseo/plugin/client/ui";
 import { View, type ViewStyle } from "react-native";
-import type { Container } from "../shared/contract";
+import { containerOf } from "./links";
 import { useSharedStatus } from "./live-status";
 import { describe } from "./state";
 import { type StatusSpec, containerStatus, statusSvg, worktreeStatus } from "./status-icon";
@@ -44,26 +44,13 @@ function Badge({ spec, theme }: { spec: BadgeSpec; theme: PluginTheme }) {
 type Side = "host" | "container";
 type BadgeProps = PluginWorkspaceRowBadgeItemProps & { side?: Side };
 
-// A host workspace's container: the same Paseo project, or the repository folder. A container
-// workspace's: the container whose daemon is the workspace's host.
-function containerFor(workspace: PluginWorkspaceSnapshot, side: Side, containers: readonly Container[]): Container | null {
-  const match =
-    side === "container"
-      ? (container: Container) => container.serverId !== null && container.serverId === workspace.hostId
-      : (container: Container) =>
-          container.project?.id === workspace.projectId ||
-          container.repoPath === workspace.projectRootPath ||
-          container.repoPath === workspace.directory;
-  return containers.find(match) ?? null;
-}
-
 // Hooks read the shared status, not settings: on a container's rows they run under the
 // companion, which cannot read this plugin's settings.
 function useBadgeContext(workspaceId: string, side: Side) {
   const status = useSharedStatus();
   const workspace = useWorkspace(workspaceId);
   if (!status?.workspaceBadges || !workspace) return null;
-  const container = containerFor(workspace, side, status.containers);
+  const container = containerOf(workspace, side, status.containers);
   return container ? { workspace, container, showName: status.workspaceBadgeNames } : null;
 }
 

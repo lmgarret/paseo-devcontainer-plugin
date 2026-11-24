@@ -10,6 +10,7 @@ import {
   type Job,
   logTerminalName,
   type Notice,
+  readWorkspaceLink,
   shellTerminalName,
   type Status,
 } from "../shared/contract";
@@ -20,12 +21,14 @@ import {
   installCompanion,
   managedHome,
   wantsCompanion,
+  writeContainerLink,
   writePluginList,
 } from "./companion-host";
 import { type DockerContainer, type Candidate, listDockerContainers, mergeCandidates, type PaseoCatalog } from "./discovery";
 import { type GuardTarget, guardTarget, hostRepoPaths, repoLinkScript, WorktreeGuard, writeGuardConfig } from "./guard";
 import { type ProjectIcon, readProjectIcon } from "./icons";
-import { hostPaseoHome, linkHomeScript, pinWorktreesRoot, planPaseoHome, repoRootOf, shellQuote } from "./paseo-home";
+import { hostPaseoHome, linkHomeScript, pinWorktreesRoot, planPaseoHome, shellQuote } from "./paseo-home";
+import { repoRootOf } from "./worktree-guard";
 import { type HostPlugins, hostPluginSignature, installedIds, listHostPlugins } from "./plugin-mirror";
 import { resolveTool, run, toolEnv } from "./process";
 
@@ -48,6 +51,8 @@ const NOTICE_MS = 10 * 60_000;
 export interface WorkspaceEvent {
   cwd: string;
   projectId: string;
+  // Absent on hosts without workspace metadata.
+  metadata?: Readonly<Record<string, unknown>>;
 }
 
 interface Tools {
@@ -325,9 +330,11 @@ export class DevcontainerController {
   }
 
   // A workspace was created here in a repository its container also uses: worth knowing, and
-  // worth a snapshot of the new worktree's record.
-  async afterWorkspaceCreate(workspace: WorkspaceEvent): Promise<void> {
-    const { tools, targets, candidates } = await this.guardTargetsFor(workspace);
+  // worth a snapshot of the new worktree's record. `tag` stores the link in the workspace's
+  // metadata when it has none yet.
+  async afterWorkspaceCreate(workspace: WorkspaceEvent, tag: (repoPath: string) => Promise<void>): Promise<void> {
+    const { tools, targets, candidates, linked } = await this.guardTargetsFor(workspace);
+    if (linked[0] && !readWorkspaceLink(workspace.metadata)) await tag(linked[0].repoPath);
     for (const target of targets) {
       const name = candidates.find((entry) => entry.repoPath === target.repoPath)?.name ?? target.repoPath;
       const message =
@@ -356,18 +363,9 @@ export class DevcontainerController {
 
   private async guardTargetsFor(workspace: WorkspaceEvent) {
     const { settings, tools, candidates } = await this.discover();
-    // An archived worktree's folder is gone; its project still names the repository.
-    const root = repoRootOf(workspace.cwd);
-    const targets = candidates.flatMap((candidate) => {
-      const target = guardTarget(settings, candidate.repoPath, candidate.container);
-      if (!target) return [];
-      const matches =
-        candidate.project?.projectId === workspace.projectId ||
-        root === target.config.hostRepo ||
-        root === candidate.repoPath;
-      return matches ? [target] : [];
-    });
-    return { tools, targets, candidates };
+    const linked = linkedCandidates(workspace, candidates);
+    const targets = linked.flatMap((candidate) => guardTarget(settings, candidate.repoPath, candidate.container) ?? []);
+    return { tools, targets, candidates, linked };
   }
 
   private jobSnapshot(repoPath: string): Job | null {
@@ -432,6 +430,7 @@ export class DevcontainerController {
               }
             : null,
           workspace: candidate.workspace ? { id: candidate.workspace.id, title: candidate.workspace.title } : null,
+          linkedWorkspaceIds: candidate.linked.map((workspace) => workspace.id),
           branch: candidate.branch,
           workspaceFolder: container?.workspaceFolder ?? null,
           hidden: settings.hidden.includes(candidate.repoPath),
@@ -651,12 +650,12 @@ export class DevcontainerController {
       this.forwarder.setDaemonRunning(repoPath, true);
       log(`Daemon already running (${info.serverId ?? "unknown server"})`);
       this.checkServerId(repoPath, info, log);
-      if (home) await this.prepareCompanion(settings, docker, target, home, guard, plugins, true, log);
+      if (home) await this.prepareCompanion(settings, docker, target, home, repoPath, container, guard, plugins, true, log);
       await this.mirrorHostPlugins(plugins, home, docker, target, repoPath, phase, log);
       return;
     }
     await this.linkPaseoHome(settings, docker, target, repoPath, log);
-    if (home) await this.prepareCompanion(settings, docker, target, home, guard, plugins, false, log);
+    if (home) await this.prepareCompanion(settings, docker, target, home, repoPath, container, guard, plugins, false, log);
     phase("Starting Paseo daemon");
     // `paseo daemon start` detaches its supervisor, so it outlives this exec.
     const result = await this.exec(
@@ -749,6 +748,8 @@ export class DevcontainerController {
     docker: string,
     target: Target,
     home: string,
+    repoPath: string,
+    container: DockerContainer | null,
     guard: GuardTarget | null,
     plugins: HostPlugins | null,
     running: boolean,
@@ -757,6 +758,9 @@ export class DevcontainerController {
     let install: ReturnType<typeof installCompanion>;
     try {
       if (guard) writeGuardConfig(guard.config);
+      // Lets the companion link the container's workspaces to the repository.
+      const folder = container?.workspaceFolder;
+      writeContainerLink(home, folder ? { repoPath, containerFolder: folder } : null);
       if (!settings.mirrorHostPlugins) writePluginList(home, null);
       else if (plugins) writePluginList(home, plugins.plugins);
       install = installCompanion(home, running, log);
@@ -937,4 +941,16 @@ function readServerId(): string | null {
 
 function lastLine(text: string): string {
   return text.trim().split("\n").pop()?.trim() ?? "";
+}
+
+// The containers a workspace on this machine belongs to: the one its metadata names; without
+// metadata, its repository folder, then its project. An archived worktree's folder is gone, but
+// its project still names the repository.
+function linkedCandidates(workspace: WorkspaceEvent, candidates: Candidate[]): Candidate[] {
+  const link = readWorkspaceLink(workspace.metadata);
+  if (link) return candidates.filter((candidate) => candidate.repoPath === link.repoPath);
+  const root = repoRootOf(workspace.cwd);
+  const byFolder = candidates.filter((candidate) => root !== null && hostRepoPaths(candidate.repoPath).includes(root));
+  const byProject = candidates.filter((candidate) => !byFolder.includes(candidate) && candidate.project?.projectId === workspace.projectId);
+  return [...byFolder, ...byProject];
 }
